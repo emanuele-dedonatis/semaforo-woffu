@@ -47,6 +47,14 @@ void AppStateMachine::begin() {
 
 void AppStateMachine::loop() {
     handleBleEvents();
+
+    static bool wasWifiConnected = false;
+    bool wifiConnected = wifi_.isConnected();
+    if (wifiConnected && !wasWifiConnected) {
+        Serial.printf("WiFi conectado, IP: %s\n", wifi_.ipAddress().c_str());
+        timeSync_.begin(config_.get().timezone);
+    }
+    wasWifiConnected = wifiConnected;
 }
 
 void AppStateMachine::enterUnconfigured() {
@@ -57,6 +65,7 @@ void AppStateMachine::enterUnconfigured() {
 void AppStateMachine::enterBleWindow() {
     ble_.begin();
     led_.set(ledForBleWindow(WoffuStatus::UNKNOWN, config_.get().brightness));
+    wifi_.begin(config_.get().wifiSsid, config_.get().wifiPassword);
 }
 
 void AppStateMachine::enterRunning() {
