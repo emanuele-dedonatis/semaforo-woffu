@@ -11,6 +11,10 @@ Firmware para un dispositivo ESP32 que muestra el estado de fichaje de [Woffu](h
 - PlatformIO + framework Arduino (`arduino-esp32`).
 - Librerías previstas: NimBLE-Arduino (BLE), HTTPClient/HTTPUpdate (API Woffu y OTA), Preferences (NVS), ArduinoJson.
 
+## Mantenimiento de la documentación
+
+`README.md` y este `CLAUDE.md` deben mantenerse siempre actualizados: cualquier cambio relevante en stack, estructura del proyecto o alcance debe reflejarse en ambos como parte del mismo trabajo, no como tarea aparte.
+
 ## Convenciones de commits
 
 Este repo usa **Conventional Commits** de forma estricta, para poder automatizar versionado (semantic-release o similar) a partir del historial. Formato:
