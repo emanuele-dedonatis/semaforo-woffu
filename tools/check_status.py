@@ -29,10 +29,12 @@ def login(username: str, password: str) -> str:
     return body["accessToken"]
 
 
-def get_slots(domain: str, token: str) -> list:
-    url = f"https://{domain}/api/svc/signs/v2/signs/slots"
+SLOTS_URL = "https://app.woffu.com/api/svc/signs/v2/signs/slots"
+
+
+def get_slots(token: str) -> list:
     req = urllib.request.Request(
-        url,
+        SLOTS_URL,
         headers={"Authorization": f"Bearer {token}"},
         method="GET",
     )
@@ -51,13 +53,11 @@ def compute_status(slots: list) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--domain", required=True, help="dominio de empresa, p.ej. miempresa.woffu.com")
     parser.add_argument("--username", required=True)
     parser.add_argument("--password", help="si se omite, se pide de forma interactiva")
     parser.add_argument("-v", "--verbose", action="store_true", help="muestra las respuestas completas")
     args = parser.parse_args()
 
-    domain = args.domain.removeprefix("https://").removeprefix("http://").rstrip("/")
     password = args.password or getpass.getpass("Password: ")
 
     try:
@@ -65,7 +65,7 @@ def main() -> int:
         if args.verbose:
             print(f"accessToken: {token[:20]}...", file=sys.stderr)
 
-        slots = get_slots(domain, token)
+        slots = get_slots(token)
         if args.verbose:
             print(json.dumps(slots, indent=2), file=sys.stderr)
 

@@ -89,7 +89,6 @@ Namespace `cfg`:
 | `configured` | bool | `true` |
 | `wifi_ssid` | string | |
 | `wifi_pass` | string | |
-| `woffu_domain` | string | |
 | `woffu_user` | string | |
 | `woffu_pass` | string | |
 | `tz` | string (POSIX TZ) | `CET-1CEST,M3.5.0,M10.5.0/3` |
@@ -117,7 +116,7 @@ Un solo blob JSON en `CONFIG` en vez de una característica por campo: para el u
 
 ## Cliente Woffu
 
-Basado en las llamadas capturadas (ver `curl.md`, no versionado — contiene credenciales reales).
+Basado en llamadas capturadas manualmente desde el navegador y verificadas con `tools/check_status.py`.
 
 ### Login
 
@@ -128,7 +127,7 @@ Content-Type: application/x-www-form-urlencoded
 grant_type=password&username=<user>&password=<pass>
 ```
 
-Nótese que el login va siempre contra el host fijo `app.woffu.com`, **no** contra el dominio/subdominio de empresa — el propio JWT devuelto ya lleva embebido el `CompanyId`. El campo `woffu_domain` de la config solo hace falta para la siguiente llamada.
+El login va contra el host fijo `app.woffu.com`, el propio JWT devuelto ya lleva embebido el `CompanyId`. Se ha verificado (`tools/check_status.py`) que ese mismo host fijo también sirve para la llamada de estado de fichaje (ver más abajo), así que **no hace falta pedir el dominio/subdominio de empresa** en el provisioning — un campo menos que configurar por BLE.
 
 Respuesta:
 ```json
@@ -146,7 +145,7 @@ Respuesta:
 ### Estado de fichaje
 
 ```
-GET https://<woffu_domain>/api/svc/signs/v2/signs/slots
+GET https://app.woffu.com/api/svc/signs/v2/signs/slots
 Authorization: Bearer <accessToken>
 ```
 
@@ -170,9 +169,9 @@ Lógica de interpretación (puede haber varios slots en el día, p.ej. con pausa
 
 Cualquier otro caso (respuesta inesperada, error HTTP, timeout, JSON inválido) → ámbar, sin reintento, como ya definido en Requisitos.md.
 
-### `platformio.ini` / TLS
+### TLS
 
-Ambos hosts (`app.woffu.com` y `<woffu_domain>`) por HTTPS — usar el certificate bundle de `arduino-esp32` (igual que para OTA) en vez de pinnear certificados.
+`app.woffu.com` por HTTPS — usar el certificate bundle de `arduino-esp32` (igual que para OTA) en vez de pinnear certificados.
 
 ## OTA — detalle de implementación
 

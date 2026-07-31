@@ -42,7 +42,6 @@ Compatible con cualquier placa ESP32 que tenga WiFi + BLE (**excluye ESP32-S2**,
 Los usuarios se conectan por bluetooth desde el móvil, a través de una app BLE genérica (p.ej. nRF Connect), para personalizar:
 
 - SSID / password del WiFi
-- Dominio de Woffu
 - Usuario / password de Woffu
 - Horarios de ventanas activas y pasivas / días de monitorización
 - Zona horaria

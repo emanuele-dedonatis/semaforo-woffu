@@ -9,7 +9,7 @@ Reproduce el flujo de login + consulta de estado de fichaje contra la API de Wof
 Requiere Python 3, sin dependencias externas.
 
 ```
-python3 tools/check_status.py --domain miempresa.woffu.com --username tu@email.com
+python3 tools/check_status.py --username tu@email.com
 ```
 
 - Si no se pasa `--password`, se pide de forma interactiva (no queda en el historial de la shell).
