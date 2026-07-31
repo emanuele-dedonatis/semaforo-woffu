@@ -4,7 +4,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 
-enum class LedColor : uint8_t { OFF, RED, YELLOW, GREEN };
+enum class LedColor : uint8_t { OFF, RED, YELLOW, GREEN, ALL };
 enum class LedMode : uint8_t { OFF, SOLID, BLINK_SLOW, BLINK_FAST };
 
 struct LedCommand {
@@ -21,9 +21,10 @@ public:
 private:
     static void taskFn(void* params);
 
-    uint8_t pinRed_ = 0;
-    uint8_t pinYellow_ = 0;
-    uint8_t pinGreen_ = 0;
+    static constexpr uint8_t kChannelRed = 0;
+    static constexpr uint8_t kChannelYellow = 1;
+    static constexpr uint8_t kChannelGreen = 2;
+
     QueueHandle_t commandQueue_ = nullptr;
     TaskHandle_t taskHandle_ = nullptr;
 };

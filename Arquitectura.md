@@ -182,8 +182,9 @@ Cualquier otro caso (respuesta inesperada, error HTTP, timeout, JSON inválido) 
 
 ## LED Controller
 
-- 3 canales LEDC (PWM) en los GPIOs de R/Y/G, activo-alto (cátodo común, confirmado).
-- `LedTask` interpreta `{color, mode, brightness}` de la cola: `SOLID` (duty fijo), `BLINK_SLOW` (ciclo ~1000ms), `BLINK_FAST` (~250ms), `OFF` (duty 0).
+- GPIOs por defecto: R=25, Y=26, G=27 (libres en un ESP32 DevKit genérico, no son strapping pins). Ajustables en `AppStateMachine.cpp` si el cableado real difiere.
+- 3 canales LEDC (PWM), activo-alto (cátodo común, confirmado). La versión del core `arduino-esp32` instalada por PlatformIO usa la API por canal (`ledcSetup`/`ledcAttachPin`/`ledcWrite(channel, duty)`), no la API más nueva por pin (`ledcAttach`) — canales fijos 0/1/2 para R/Y/G.
+- `LedTask` interpreta `{color, mode, brightness}` de la cola: `SOLID` (duty fijo), `BLINK_SLOW` (ciclo ~1000ms), `BLINK_FAST` (~250ms), `OFF` (duty 0). `color = ALL` enciende los tres a la vez (patrón de "no configurado").
 - Brillo (`brightness` de la config) se aplica como escala del duty cycle cuando el LED está en fase "encendido".
 
 ## CI/CD — release y publicación del firmware

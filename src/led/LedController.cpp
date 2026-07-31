@@ -1,9 +1,20 @@
 #include "LedController.h"
 
+namespace {
+constexpr uint32_t kPwmFreqHz = 5000;
+constexpr uint8_t kPwmResolutionBits = 8;
+constexpr TickType_t kSlowPeriod = pdMS_TO_TICKS(1000);
+constexpr TickType_t kFastPeriod = pdMS_TO_TICKS(250);
+constexpr TickType_t kPollPeriod = pdMS_TO_TICKS(50);
+}
+
 void LedController::begin(uint8_t pinRed, uint8_t pinYellow, uint8_t pinGreen) {
-    pinRed_ = pinRed;
-    pinYellow_ = pinYellow;
-    pinGreen_ = pinGreen;
+    ledcSetup(kChannelRed, kPwmFreqHz, kPwmResolutionBits);
+    ledcSetup(kChannelYellow, kPwmFreqHz, kPwmResolutionBits);
+    ledcSetup(kChannelGreen, kPwmFreqHz, kPwmResolutionBits);
+    ledcAttachPin(pinRed, kChannelRed);
+    ledcAttachPin(pinYellow, kChannelYellow);
+    ledcAttachPin(pinGreen, kChannelGreen);
 
     commandQueue_ = xQueueCreate(1, sizeof(LedCommand));
     xTaskCreate(taskFn, "led", 2048, this, 1, &taskHandle_);
@@ -18,8 +29,36 @@ void LedController::set(const LedCommand& command) {
 void LedController::taskFn(void* params) {
     auto* self = static_cast<LedController*>(params);
     LedCommand current;
+    bool phaseOn = true;
+    TickType_t lastToggle = xTaskGetTickCount();
 
     for (;;) {
-        xQueueReceive(self->commandQueue_, &current, portMAX_DELAY);
+        if (xQueueReceive(self->commandQueue_, &current, kPollPeriod) == pdTRUE) {
+            phaseOn = true;
+            lastToggle = xTaskGetTickCount();
+        }
+
+        TickType_t blinkPeriod = 0;
+        if (current.mode == LedMode::BLINK_SLOW) {
+            blinkPeriod = kSlowPeriod;
+        } else if (current.mode == LedMode::BLINK_FAST) {
+            blinkPeriod = kFastPeriod;
+        }
+
+        if (blinkPeriod > 0 && (xTaskGetTickCount() - lastToggle) >= blinkPeriod) {
+            phaseOn = !phaseOn;
+            lastToggle = xTaskGetTickCount();
+        }
+
+        bool lit = (current.mode == LedMode::SOLID) || (blinkPeriod > 0 && phaseOn);
+        uint32_t duty = lit ? current.brightness : 0;
+
+        bool redOn = current.color == LedColor::RED || current.color == LedColor::ALL;
+        bool yellowOn = current.color == LedColor::YELLOW || current.color == LedColor::ALL;
+        bool greenOn = current.color == LedColor::GREEN || current.color == LedColor::ALL;
+
+        ledcWrite(kChannelRed, redOn ? duty : 0);
+        ledcWrite(kChannelYellow, yellowOn ? duty : 0);
+        ledcWrite(kChannelGreen, greenOn ? duty : 0);
     }
 }
