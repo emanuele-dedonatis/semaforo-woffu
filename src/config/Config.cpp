@@ -59,6 +59,43 @@ bool Config::save(const DeviceConfig& config) {
     return true;
 }
 
+void Config::markOtaPending(const String& fromVersion, const String& toVersion) {
+    Preferences prefs;
+    if (!prefs.begin(kNamespace, false)) {
+        return;
+    }
+    prefs.putString("ota_from", fromVersion);
+    prefs.putString("ota_to", toVersion);
+    prefs.end();
+}
+
+void Config::clearOtaNote() {
+    Preferences prefs;
+    if (!prefs.begin(kNamespace, false)) {
+        return;
+    }
+    prefs.remove("ota_from");
+    prefs.remove("ota_to");
+    prefs.end();
+}
+
+bool Config::takeOtaNote(String& fromVersion, String& toVersion) {
+    Preferences prefs;
+    if (!prefs.begin(kNamespace, false)) {
+        return false;
+    }
+    toVersion = prefs.getString("ota_to", "");
+    if (toVersion.isEmpty()) {
+        prefs.end();
+        return false;
+    }
+    fromVersion = prefs.getString("ota_from", "");
+    prefs.remove("ota_from");
+    prefs.remove("ota_to");
+    prefs.end();
+    return true;
+}
+
 void Config::factoryReset() {
     Preferences prefs;
     if (prefs.begin(kNamespace, false)) {

@@ -55,6 +55,16 @@ OtaResult OtaUpdater::checkAndUpdate() {
         return OtaResult::UP_TO_DATE;
     }
 
+    // httpUpdate.update() reinicia el dispositivo el mismo si la descarga e
+    // instalacion tienen exito (rebootOnUpdate(true) mas abajo): este es el
+    // ultimo punto donde nos da tiempo a dejar constancia (Serial y, via el
+    // callback, algo que sobreviva al reboot para el portal).
+    Serial.printf("OTA: version nueva disponible (%s -> %s). Descargando e instalando...\n",
+                  FIRMWARE_VERSION, latestVersion.c_str());
+    if (beforeFlash_) {
+        beforeFlash_(FIRMWARE_VERSION, latestVersion);
+    }
+
     WiFiClientSecure updateClient;
     applyCertBundle(updateClient);
 

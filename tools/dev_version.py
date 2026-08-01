@@ -4,10 +4,11 @@ Se salta si ya viene fijado por PLATFORMIO_BUILD_FLAGS (asi construye
 tools/build_firmware.sh los releases via semantic-release, con la version
 exacta calculada), para no pisarlo ni duplicar el -D.
 
-Version resultante: <ultimo tag bump de patch>-<hash corto>, p.ej. si el
-ultimo tag es v1.1.2 y HEAD esta en 31a304b, produce "1.1.3-31a304b". Si no
-hay tags o git no esta disponible, no define nada y se usa el fallback
-"0.0.0-dev" de src/Version.h.
+Version resultante: <ultimo tag bump de patch>-dev.<hash corto>, p.ej. si el
+ultimo tag es v1.1.2 y HEAD esta en 31a304b, produce "1.1.3-dev.31a304b"
+(identificador de pre-release semver, deja claro que no es un release real
+y de que commit sale). Si no hay tags o git no esta disponible, no define
+nada y se usa el fallback "0.0.0-dev" de src/Version.h.
 """
 
 import os
@@ -35,7 +36,7 @@ def _dev_version(project_dir):
     if not match:
         return None
     major, minor, patch = (int(x) for x in match.groups())
-    return f"{major}.{minor}.{patch + 1}-{commit}"
+    return f"{major}.{minor}.{patch + 1}-dev.{commit}"
 
 
 if "FIRMWARE_VERSION" not in os.environ.get("PLATFORMIO_BUILD_FLAGS", ""):

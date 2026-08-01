@@ -29,6 +29,13 @@ public:
     bool save(const DeviceConfig& config);
     void factoryReset();
 
+    // Nota de "hay un OTA en curso" que sobrevive al reboot que dispara un
+    // flasheo con exito, para poder mostrar el resultado en el portal la
+    // proxima vez que arranca (ver AppStateMachine y OtaUpdater).
+    void markOtaPending(const String& fromVersion, const String& toVersion);
+    void clearOtaNote();
+    bool takeOtaNote(String& fromVersion, String& toVersion);
+
 private:
     DeviceConfig current_;
 };

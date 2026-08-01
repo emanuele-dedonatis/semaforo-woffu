@@ -2,6 +2,8 @@
 
 #include <time.h>
 
+#include "Version.h"
+
 namespace {
 constexpr uint8_t kPinLedRed = 25;
 constexpr uint8_t kPinLedYellow = 26;
@@ -73,6 +75,21 @@ const char* woffuStatusName(WoffuStatus status) {
 void AppStateMachine::begin() {
     config_.begin();
     led_.begin(kPinLedRed, kPinLedYellow, kPinLedGreen);
+
+    otaUpdater_.setBeforeFlashCallback([this](const String& from, const String& to) {
+        config_.markOtaPending(from, to);
+    });
+
+    String otaFrom, otaTo;
+    if (config_.takeOtaNote(otaFrom, otaTo)) {
+        if (otaTo == FIRMWARE_VERSION) {
+            portal_.reportOtaStatus("OTA: actualizado correctamente de " + otaFrom + " a " + otaTo + ".");
+        } else {
+            portal_.reportOtaStatus("OTA: se intento actualizar a " + otaTo +
+                                     " pero el dispositivo arranco con " + String(FIRMWARE_VERSION) +
+                                     " - revisa el log serie.");
+        }
+    }
 
     state_ = config_.get().configured ? AppState::PORTAL_WINDOW : AppState::UNCONFIGURED;
 
@@ -204,6 +221,10 @@ void AppStateMachine::handlePortal() {
                 portal_.reportOtaStatus("OTA: actualizado correctamente, reiniciando...");
                 break;
             case OtaResult::ERROR:
+                // Si el fallo fue en el flasheo (tras el callback de OtaUpdater), no hubo
+                // reboot: limpiar la nota para que no reaparezca en un reinicio posterior
+                // sin relacion (p.ej. un guardado normal de config dias despues).
+                config_.clearOtaNote();
                 Serial.printf("OTA: error comprobando o descargando la actualizacion (%s).\n",
                                otaUpdater_.lastErrorDetail().c_str());
                 portal_.reportOtaStatus("OTA: error - " + otaUpdater_.lastErrorDetail());
