@@ -52,7 +52,7 @@ Campos configurables desde el portal:
 ### Disponibilidad del portal
 
 - Si el dispositivo **no está configurado**: red WiFi propia (AP) siempre activa, sin límite de tiempo.
-- Si el dispositivo **ya está configurado**: AP activo los primeros 30s tras el arranque, en espera de que alguien se conecte a esa red (fijo, no configurable). Mientras no se conecte nadie, pasados esos 30s se desactiva y el dispositivo pasa a funcionamiento normal. Si alguien se conecta, la ventana se mantiene abierta sin límite de tiempo mientras siga conectado, y se cierra en cuanto se desconecta (no hace falta esperar a que expire ningún plazo).
+- Si el dispositivo **ya está configurado**: AP activo los primeros 10s tras el arranque, en espera de que alguien se conecte a esa red (fijo, no configurable). Mientras no se conecte nadie, pasados esos 10s se desactiva y el dispositivo pasa a funcionamiento normal. Si alguien se conecta, la ventana se mantiene abierta sin límite de tiempo mientras siga conectado, y se cierra en cuanto se desconecta (no hace falta esperar a que expire ningún plazo).
 - Mientras el portal está activo (configurado o no), la conexión a la WiFi real todavía no se intenta — se pospone hasta que se cierra la ventana, para no competir con el AP durante la fase de configuración.
 - Para volver a entrar en modo configuración: apagar y reencender el dispositivo.
 
@@ -63,7 +63,7 @@ Campos configurables desde el portal:
 
 ### Feedback visual (parpadeo de LEDs)
 
-Aplica tanto si el dispositivo está configurado (durante los 30s de ventana) como si no (indefinidamente):
+Aplica tanto si el dispositivo está configurado (durante los 10s de ventana) como si no (indefinidamente):
 
 | Alguien conectado a la red propia | Patrón |
 |---|---|

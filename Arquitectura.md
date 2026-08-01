@@ -15,7 +15,7 @@ Basado en [Requisitos.md](Requisitos.md). Documento vivo, igual que el de requis
      │              │
      ▼              ▼
 ┌───────────┐  ┌───────────────┐
-│UNCONFIGURED│  │ PORTAL_WINDOW │  (30s iniciales sin nadie conectado;
+│UNCONFIGURED│  │ PORTAL_WINDOW │  (10s iniciales sin nadie conectado;
 │(AP siempre │  │ (solo AP, sin │   sin límite mientras haya alguien
 │  activo)   │  │  STA todavía) │   conectado; cierra al desconectar)
 └─────┬──────┘  └──────┬────────┘
@@ -29,7 +29,7 @@ Basado en [Requisitos.md](Requisitos.md). Documento vivo, igual que el de requis
 
 - **INIT**: lee `Config` de NVS (Preferences), decide rama según `configured`.
 - **UNCONFIGURED**: `WiFi.softAP` anunciando indefinidamente (modo `WIFI_AP`, sin STA — no hay credenciales aún).
-- **PORTAL_WINDOW**: solo quien ya tiene `configured == true`. Aquí el ESP32 va solo en modo `WIFI_AP` (sin STA en paralelo) — la conexión a la WiFi real ya guardada se pospone a `RUNNING`, para no competir con el AP durante la fase de configuración. Espera 30s a que alguien se conecte al AP; si nadie lo hace, pasa a `RUNNING`. Si alguien se conecta, la ventana se queda abierta sin límite de tiempo mientras siga conectado (`WiFi.softAPgetStationNum() > 0`, consultado cada `loop()`), y se cierra en el momento en que se desconecta — sin depender de ningún timeout adicional.
+- **PORTAL_WINDOW**: solo quien ya tiene `configured == true`. Aquí el ESP32 va solo en modo `WIFI_AP` (sin STA en paralelo) — la conexión a la WiFi real ya guardada se pospone a `RUNNING`, para no competir con el AP durante la fase de configuración. Espera 10s a que alguien se conecte al AP; si nadie lo hace, pasa a `RUNNING`. Si alguien se conecta, la ventana se queda abierta sin límite de tiempo mientras siga conectado (`WiFi.softAPgetStationNum() > 0`, consultado cada `loop()`), y se cierra en el momento en que se desconecta — sin depender de ningún timeout adicional.
 - **RUNNING**: AP y servidor web apagados del todo (para no dejar superficie de ataque innecesaria mientras opera). Arranca la conexión WiFi STA a la red real. Corre el scheduler de polling contra Woffu y refleja el estado en el semáforo.
 
 Al guardar el formulario, el dispositivo persiste en NVS y hace **reboot automático inmediato** (tras responder la página de confirmación HTTP). Si el usuario quiere seguir cambiando cosas, vuelve a entrar en la ventana de portal tras el reboot.
@@ -65,10 +65,13 @@ src/
     TimeSync.{h,cpp}          # NTP + zona horaria (setenv TZ + configTzTime)
     WoffuClient.{h,cpp}       # llamadas a la API de Woffu
     OtaUpdater.{h,cpp}        # HTTPUpdate contra GitHub Releases
+    CertBundle.{h,cpp}        # adjunta el bundle de CAs embebido a un WiFiClientSecure
   web/
     ProvisioningPortal.{h,cpp} # AP WiFi + DNS captivo + servidor HTTP con el formulario
   led/
     LedController.{h,cpp}     # LedTask, LEDC PWM, patrones de parpadeo
+data/
+  cert/x509_crt_bundle.bin  # bundle de CAs de Mozilla, vendorizado (ver sección TLS)
 ```
 
 ## Partition table
@@ -171,13 +174,24 @@ Cualquier otro caso (respuesta inesperada, error HTTP, timeout, JSON inválido) 
 
 ### TLS
 
-`app.woffu.com` por HTTPS — usar el certificate bundle de `arduino-esp32` (igual que para OTA) en vez de pinnear certificados.
+`app.woffu.com` por HTTPS — usar el certificate bundle de `arduino-esp32` (igual que para OTA) en vez de pinnear certificados. Ver detalle de cómo se genera y embebe en `## Certificate bundle (TLS)`.
+
+## Certificate bundle (TLS)
+
+`WoffuClient` y `OtaUpdater` comparten el mismo mecanismo de validación TLS: el **certificate bundle** de `arduino-esp32` (bundle de CAs de Mozilla, vía `WiFiClientSecure::setCACertBundle()`), en vez de pinnear certificados a mano — así no se rompe si GitHub o Woffu rotan certificados.
+
+- El bundle **no viene pre-generado** en el core `arduino-esp32`: hay que construirlo con `gen_crt_bundle.py` (utilidad de ESP-IDF) a partir de una lista de CAs en PEM.
+- **Decisión**: se genera una vez y se **vendoriza** en el repo como binario (`data/cert/x509_crt_bundle.bin`, ~54KB), en vez de regenerarlo en cada build. Prioriza build simple y reproducible (sin dependencia de red ni del paquete Python `cryptography` en cada máquina/CI) a cambio de tener que regenerarlo a mano de vez en cuando si caducan CAs. Encaja con el margen de flash ya previsto para esto (ver `## Partition table`).
+- Generado con: `gen_crt_bundle.py` de la versión de ESP-IDF que trae el core instalado (`tools/sdk/versions.txt` del paquete `framework-arduinoespressif32`, actualmente IDF v4.4.7) + la lista de CAs de Mozilla publicada por curl en <https://curl.se/ca/cacert.pem>. Para regenerarlo: descargar ambos, `pip install cryptography`, y `python3 gen_crt_bundle.py --input cacert.pem -q`, copiando el `x509_crt_bundle` resultante a `data/cert/x509_crt_bundle.bin`.
+- Se embebe en el firmware vía `board_build.embed_files = data/cert/x509_crt_bundle.bin` en `platformio.ini` (sin filesystem SPIFFS/LittleFS de por medio, igual que la plantilla HTML del portal).
+- `src/net/CertBundle.{h,cpp}` centraliza el símbolo `extern` generado por el linker (`_binary_data_cert_x509_crt_bundle_bin_start`) y expone `applyCertBundle(WiFiClientSecure&)`, para no duplicar esa declaración frágil en `WoffuClient` y `OtaUpdater`.
 
 ## OTA — detalle de implementación
 
 - URL estable de GitHub Releases: `https://github.com/emanuele-dedonatis/semaforo-woffu/releases/latest/download/firmware.bin` — siempre apunta al asset de la última release, sin necesidad de llamar a la API de GitHub ni parsear JSON.
 - Antes de descargar el `.bin` (varios cientos de KB/pocos MB), descargar primero un asset pequeño `version.txt` de la misma release y compararlo con la versión actual (embebida en el firmware) — si coincide, no hace falta bajar el binario entero.
-- Validación TLS: usar el **certificate bundle** que trae `arduino-esp32` (vía `WiFiClientSecure` + bundle de CAs de Mozilla) en vez de pinnear certificados a mano — así no se rompe si GitHub o Woffu rotan certificados.
+- Validación TLS: certificate bundle, ver `## Certificate bundle (TLS)`.
+- La versión actual del firmware se embebe en tiempo de compilación con el build flag `FIRMWARE_VERSION` (p.ej. `-D FIRMWARE_VERSION=\"1.4.0\"`), inyectado por `tools/build_firmware.sh` durante el release (ver `## CI/CD`). Sin ese flag (build local de desarrollo), `OtaUpdater.cpp` usa el valor por defecto `"0.0.0-dev"` vía `#ifndef`.
 - Tras un flasheo OTA correcto, `HTTPUpdate` deja marcado el nuevo slot como boot y reinicia solo.
 
 ## LED Controller
@@ -195,10 +209,18 @@ Repo: [emanuele-dedonatis/semaforo-woffu](https://github.com/emanuele-dedonatis/
 El versionado y la publicación de releases se automatizan con **semantic-release**, apoyándose en los Conventional Commits (ver `CLAUDE.md`), en un workflow de GitHub Actions disparado en push a `main`:
 
 1. `semantic-release` analiza los commits desde el último release. Si no hay `feat`/`fix`/breaking changes (p.ej. solo `docs`/`chore`), no genera release nuevo — no hay build de firmware de por medio.
-2. Si toca versión nueva, antes de publicar (plugin `exec`, hook `prepareCmd`) se lanza `pio run` pasando la versión calculada como build flag (para que el firmware conozca su propia versión en runtime) y se genera `version.txt` con ese número.
+2. Si toca versión nueva, antes de publicar (plugin `exec`, hook `prepareCmd`) se ejecuta `tools/build_firmware.sh ${nextRelease.version}`, que:
+   - escribe `version.txt` con el número de versión calculado;
+   - lanza `pio run -e esp32dev` pasando ese número como build flag `FIRMWARE_VERSION` (vía la variable de entorno `PLATFORMIO_BUILD_FLAGS`, para no tocar `platformio.ini` en cada release);
+   - copia el binario resultante a `firmware.bin` en la raíz del repo.
 3. El plugin `@semantic-release/github` publica el Release con `firmware.bin` y `version.txt` como assets adjuntos automáticamente, dejándolos disponibles en `.../releases/latest/download/...` sin pasos manuales.
 
-El workflow concreto (`.github/workflows/release.yml`) se escribe cuando exista el esqueleto de PlatformIO (necesita el nombre del entorno/board definido en `platformio.ini`).
+Piezas concretas:
+
+- `package.json` — `devDependencies` con `semantic-release` y los plugins usados (`commit-analyzer`, `release-notes-generator`, `exec`, `github`); no se usa `@semantic-release/npm` (no se publica a ningún registro npm).
+- `.releaserc.json` — configuración de los plugins anteriores, en el orden en que corren.
+- `tools/build_firmware.sh` — script de build descrito arriba, ejecutable también en local para probar un build "de release" sin depender de CI.
+- `.github/workflows/release.yml` — job único en `ubuntu-latest`, disparado en push a `main`: checkout con `fetch-depth: 0` (semantic-release necesita el historial completo/tags), setup de Node y de Python+PlatformIO, `npm install`, y `npx semantic-release` con `GITHUB_TOKEN` (el token por defecto del workflow, con permiso `contents: write` para crear el Release).
 
 ## Estado
 

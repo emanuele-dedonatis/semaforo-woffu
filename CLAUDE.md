@@ -10,6 +10,7 @@ Firmware para un dispositivo ESP32 que muestra el estado de fichaje de [Woffu](h
 
 - PlatformIO + framework Arduino (`arduino-esp32`).
 - Librerías: WebServer y DNSServer (portal de configuración, incluidas en el core de `arduino-esp32`), HTTPClient/HTTPUpdate (API Woffu y OTA), Preferences (NVS), ArduinoJson.
+- CI/CD: GitHub Actions + `semantic-release` (Node), disparado en push a `main` — ver `## CI/CD` en Arquitectura.md.
 
 ## Mantenimiento de la documentación
 

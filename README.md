@@ -19,7 +19,8 @@ Firmware para un dispositivo ESP32 que muestra visualmente el estado de fichaje 
 
 - PlatformIO + framework Arduino (`arduino-esp32`).
 - Librerías: WebServer y DNSServer (portal de configuración, incluidas en el core de `arduino-esp32`), HTTPClient/HTTPUpdate (API Woffu y OTA), Preferences (NVS), ArduinoJson.
+- CI/CD: GitHub Actions + `semantic-release` (versionado y publicación de releases a partir de Conventional Commits).
 
 ## Estado
 
-En desarrollo activo. Implementados: `Config` (NVS), `LedController`, `WifiManager`, `TimeSync`, `ProvisioningPortal` (portal WiFi de configuración). Pendientes: `WoffuClient`, `OtaUpdater`.
+MVP completo: `Config` (NVS), `LedController`, `WifiManager`, `TimeSync`, `ProvisioningPortal` (portal WiFi de configuración), `Scheduler`, `WoffuClient`, `AppStateMachine` (incluyendo el bucle de polling en `RUNNING`), `OtaUpdater` y el pipeline de release en CI. Pendiente de validar en hardware real; ver [Plan.md](Plan.md).
