@@ -4,15 +4,15 @@ Firmware para un dispositivo ESP32 que muestra visualmente el estado de fichaje 
 
 ## Documentación
 
-- [Requisitos.md](Requisitos.md) — alcance funcional, hardware, provisioning BLE, OTA.
-- [Arquitectura.md](Arquitectura.md) — máquina de estados, tareas, esquema BLE/NVS, cliente Woffu, OTA.
+- [Requisitos.md](Requisitos.md) — alcance funcional, hardware, portal de configuración WiFi, OTA.
+- [Arquitectura.md](Arquitectura.md) — máquina de estados, tareas, portal WiFi/NVS, cliente Woffu, OTA.
 - [tools/README.md](tools/README.md) — scripts auxiliares de desarrollo.
 
 ## Stack
 
 - PlatformIO + framework Arduino (`arduino-esp32`).
-- Librerías previstas: NimBLE-Arduino (BLE), HTTPClient/HTTPUpdate (API Woffu y OTA), Preferences (NVS), ArduinoJson.
+- Librerías: WebServer y DNSServer (portal de configuración, incluidas en el core de `arduino-esp32`), HTTPClient/HTTPUpdate (API Woffu y OTA), Preferences (NVS), ArduinoJson.
 
 ## Estado
 
-En fase de diseño, aún sin código de firmware.
+En desarrollo activo. Implementados: `Config` (NVS), `LedController`, `WifiManager`, `TimeSync`, `ProvisioningPortal` (portal WiFi de configuración). Pendientes: `WoffuClient`, `OtaUpdater`.

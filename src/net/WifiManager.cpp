@@ -2,7 +2,8 @@
 #include <WiFi.h>
 
 void WifiManager::begin(const String& ssid, const String& password) {
-    WiFi.mode(WIFI_STA);
+    // No fuerza WiFi.mode(WIFI_STA): WiFi.begin() habilita STA vía enableSTA(),
+    // que combina el bit con el modo AP si el portal de provisioning ya está activo.
     WiFi.setAutoReconnect(true);
     WiFi.begin(ssid.c_str(), password.c_str());
 }

@@ -14,44 +14,39 @@ Basado en [Requisitos.md](Requisitos.md). Documento vivo, igual que el de requis
     sí              no
      │              │
      ▼              ▼
-┌───────────┐  ┌─────────────┐
-│UNCONFIGURED│  │ BLE_WINDOW  │  (60s, o hasta desconexión si hay pairing)
-│(BLE siempre│  │ (BLE activo,│
-│  activo)   │  │ WiFi ya     │
-└─────┬──────┘  │ conectando  │
-      │         │ en paralelo)│
-      │         └──────┬──────┘
-      │ config          │ timeout sin pairing,
-      │ válida          │ o disconnect tras pairing
-      │ recibida        │
-      ▼                 ▼
- [guarda NVS,      ┌──────────┐
-  reboot]  ───────▶│ RUNNING  │  (BLE apagado, scheduler + polling Woffu)
-                    └──────────┘
+┌───────────┐  ┌───────────────┐
+│UNCONFIGURED│  │ PORTAL_WINDOW │  (30s iniciales sin nadie conectado;
+│(AP siempre │  │ (solo AP, sin │   sin límite mientras haya alguien
+│  activo)   │  │  STA todavía) │   conectado; cierra al desconectar)
+└─────┬──────┘  └──────┬────────┘
+      │ formulario       │ timeout sin nadie conectado,
+      │ guardado         │ o se desconecta el último cliente
+      ▼                  ▼
+ [guarda NVS,       ┌──────────┐
+  reboot]  ────────▶│ RUNNING  │  (AP apagado, arranca WiFi STA,
+                     └──────────┘   scheduler + polling Woffu)
 ```
 
 - **INIT**: lee `Config` de NVS (Preferences), decide rama según `configured`.
-- **UNCONFIGURED**: BLE anunciando indefinidamente. WiFi apagado (no hay credenciales aún).
-- **BLE_WINDOW**: solo quien ya tiene `configured == true`. WiFi se intenta conectar en paralelo (coexistencia WiFi+BLE del ESP32, comparten radio 2.4GHz pero el controller gestiona el time-slicing; para JSON pequeños y polling poco frecuente no es un problema). Si nadie empareja en 60s → `RUNNING`. Si empareja, la ventana quedaría abierta, pero como se ve abajo, en la práctica cualquier escritura de config válida dispara un reboot inmediato.
-- **RUNNING**: BLE apagado del todo (para no dejar superficie de ataque innecesaria mientras opera). Corre el scheduler de polling contra Woffu y refleja el estado en el semáforo.
+- **UNCONFIGURED**: `WiFi.softAP` anunciando indefinidamente (modo `WIFI_AP`, sin STA — no hay credenciales aún).
+- **PORTAL_WINDOW**: solo quien ya tiene `configured == true`. Aquí el ESP32 va solo en modo `WIFI_AP` (sin STA en paralelo) — la conexión a la WiFi real ya guardada se pospone a `RUNNING`, para no competir con el AP durante la fase de configuración. Espera 30s a que alguien se conecte al AP; si nadie lo hace, pasa a `RUNNING`. Si alguien se conecta, la ventana se queda abierta sin límite de tiempo mientras siga conectado (`WiFi.softAPgetStationNum() > 0`, consultado cada `loop()`), y se cierra en el momento en que se desconecta — sin depender de ningún timeout adicional.
+- **RUNNING**: AP y servidor web apagados del todo (para no dejar superficie de ataque innecesaria mientras opera). Arranca la conexión WiFi STA a la red real. Corre el scheduler de polling contra Woffu y refleja el estado en el semáforo.
 
-Cualquier escritura de configuración válida provoca un **reboot automático inmediato** (tras confirmar el ACK por BLE), en vez de esperar a la desconexión del móvil. Evita tener que tirar el stack BLE y levantar WiFi en caliente dentro del mismo proceso. Si el usuario quiere seguir cambiando cosas, vuelve a entrar en la ventana de 60s tras el reboot.
+Al guardar el formulario, el dispositivo persiste en NVS y hace **reboot automático inmediato** (tras responder la página de confirmación HTTP). Si el usuario quiere seguir cambiando cosas, vuelve a entrar en la ventana de portal tras el reboot.
 
-## Tareas FreeRTOS y comunicación
+## Tareas y comunicación
 
-No hace falta una arquitectura muy fragmentada; con 3 flujos de ejecución es suficiente:
+Aquí sí que la arquitectura es más simple que con BLE: `WebServer`/`DNSServer` son **síncronos** y se bombean explícitamente desde `loop()` (no crean su propia tarea FreeRTOS como hacía el stack de NimBLE), así que todo corre en la tarea `loopTask` del framework Arduino, salvo el parpadeo de LEDs:
 
 | Tarea | Quién la crea | Responsabilidad |
 |---|---|---|
-| `loopTask` (la del framework Arduino) | Arduino core | Orquestador: máquina de estados, scheduler de polling, llamadas HTTP a Woffu, disparo de OTA |
+| `loopTask` (la del framework Arduino) | Arduino core | Orquestador: máquina de estados, bombeo de `ProvisioningPortal` (DNS+HTTP), scheduler de polling, llamadas HTTP a Woffu, disparo de OTA |
 | `LedTask` | `xTaskCreate` en `setup()` | Animación de LEDs (PWM/blink) independiente, para que una llamada HTTP lenta no congele el parpadeo |
-| Tarea interna de NimBLE | La librería NimBLE-Arduino | Stack BLE, callbacks de conexión/escritura |
 
-Comunicación entre tareas por **colas FreeRTOS** (evita mutex explícitos donde no hace falta):
+Comunicación:
 
-- `ledCmdQueue` (orquestador → LedTask): `{color, mode: OFF|SOLID|BLINK_SLOW|BLINK_FAST, brightness}`
-- `bleEventQueue` (callbacks BLE → orquestador): `CONFIG_RECEIVED`, `OTA_REQUESTED`, `CLIENT_CONNECTED`, `CLIENT_DISCONNECTED`
-- El struct `Config` en RAM se escribe solo desde el callback BLE y se lee solo desde el orquestador tras un evento `CONFIG_RECEIVED` — sin necesidad de mutex porque no hay lectura/escritura concurrente real (todo pasa por la cola de eventos).
+- `ledCmdQueue` (orquestador → LedTask): `{color, mode: OFF|SOLID|BLINK_SLOW|BLINK_FAST, brightness}` — sigue siendo una cola FreeRTOS porque cruza tareas de verdad.
+- Orquestador ↔ `ProvisioningPortal`: **sin cola** — como los handlers HTTP se ejecutan síncronamente dentro de la misma llamada a `portal_.loop()` (propia tarea `loopTask`), basta con banderas/valores miembro normales (`takeConfigToSave()`, `takeOtaRequested()`, `takeFactoryResetRequested()`), sin necesidad de mecanismos cross-task.
 
 ## Estructura del proyecto (PlatformIO)
 
@@ -70,15 +65,15 @@ src/
     TimeSync.{h,cpp}          # NTP + zona horaria (setenv TZ + configTzTime)
     WoffuClient.{h,cpp}       # llamadas a la API de Woffu
     OtaUpdater.{h,cpp}        # HTTPUpdate contra GitHub Releases
-  ble/
-    BleProvisioning.{h,cpp}   # servidor NimBLE, GATT, callbacks
+  web/
+    ProvisioningPortal.{h,cpp} # AP WiFi + DNS captivo + servidor HTTP con el formulario
   led/
     LedController.{h,cpp}     # LedTask, LEDC PWM, patrones de parpadeo
 ```
 
 ## Partition table
 
-Se necesitan dos particiones OTA (`app0`/`app1`) + `otadata`. No hace falta SPIFFS/LittleFS (toda la config vive en NVS, no hay assets web que servir). Usar el esquema `default_ota.csv` que trae PlatformIO/arduino-esp32 de serie (dos slots de ~1.9MB cada uno, sobra para este firmware), o una tabla propia mínima si se quiere afinar tamaños.
+Se necesitan dos particiones OTA (`app0`/`app1`) + `otadata`. No hace falta SPIFFS/LittleFS (toda la config vive en NVS; la página HTML del portal va embebida como constante en el propio firmware, no como asset servido desde un filesystem). Se usa el esquema `min_spiffs.csv` que trae `arduino-esp32` de serie: dos slots OTA de ~1,9MB cada uno. Tras quitar NimBLE (ver decisión más abajo) el firmware bajó a ~42% de un slot, con margen de sobra incluso para el esquema `default.csv` más ajustado (1,25MB) — se mantiene `min_spiffs.csv` de todas formas, sin urgencia por volver atrás.
 
 ## Esquema de configuración (NVS / Preferences)
 
@@ -98,21 +93,26 @@ Namespace `cfg`:
 | `poll_passive_s` | uint16 | `900` |
 | `brightness` | uint8 (0-255) | `180` |
 
-**Sin cifrado de NVS para el MVP**: cifrar de verdad el contenido de NVS en el ESP32 requiere activar *flash encryption* a nivel de eFuse (paso de fábrica/primer flasheo, irreversible en modo *release*, y que complica el flujo de OTA con firmas/cifrado de imágenes). Queda descartado para el MVP; la config permanece protegida solo por el pairing BLE con PIN. Se anota como posible mejora futura opcional para quien quiera más hardening.
+**Sin cifrado de NVS para el MVP**: cifrar de verdad el contenido de NVS en el ESP32 requiere activar *flash encryption* a nivel de eFuse (paso de fábrica/primer flasheo, irreversible en modo *release*, y que complica el flujo de OTA con firmas/cifrado de imágenes). Queda descartado para el MVP; la config permanece protegida solo por la password del AP de configuración. Se anota como posible mejora futura opcional para quien quiera más hardening.
 
-## Diseño BLE GATT
+## Portal de configuración (WiFi AP + HTTP)
 
-Un único servicio custom (UUID propio generado para el proyecto), con 3 características para que sea manejable a mano desde nRF Connect:
+**Decisión revisada**: el diseño original usaba BLE (NimBLE) con un servicio GATT custom. Se descartó tras probarlo en hardware real por ser poco amigable para usuarios no técnicos que van a compartir el dispositivo: apps genéricas como nRF Connect muestran "Unknown Characteristic" para UUIDs custom (no leen el descriptor de nombre para la cabecera), y hay que escribir cada característica una por una entendiendo su formato. Se sustituye por un **portal cautivo WiFi**, el patrón estándar en IoT doméstico (enchufes inteligentes, Chromecast, etc.): sin apps, funciona igual en Android que en iPhone (a diferencia de una alternativa evaluada con Web Bluetooth, que no funciona en Safari/iOS).
 
-| Característica | Propiedades | Contenido |
-|---|---|---|
-| `CONFIG` | Write | JSON con todos los campos de la tabla de arriba (excepto `configured`, que lo pone el firmware al validar) |
-| `STATUS` | Read, Notify | JSON: `{"fw":"1.2.0","configured":true,"wifi":"connected","ip":"...","result":"ok"}` — feedback de éxito/error tras escribir `CONFIG` o pedir OTA |
-| `COMMAND` | Write | String simple: `"OTA_CHECK"`, `"FACTORY_RESET"` |
+### Flujo
 
-Un solo blob JSON en `CONFIG` en vez de una característica por campo: para el usuario es una única escritura de texto (nRF Connect permite escribir strings UTF-8), y en firmware es un único parseo con ArduinoJson en vez de gestionar el estado parcial de múltiples características.
+1. El dispositivo crea su propia red WiFi (`WiFi.softAP`), SSID `Semaforo-XXXXXX` (últimos 3 bytes de la MAC, igual que antes), protegida con WPA2 y una password de 8 dígitos derivada de la MAC (mismo principio que el PIN de BLE, pero con longitud válida para WPA2-PSK, que exige mínimo 8 caracteres).
+2. Un `DNSServer` interno resuelve **todas** las consultas DNS a la IP propia del AP (`192.168.4.1`), y el `WebServer` redirige (302) cualquier ruta no reconocida a `/`. Combinados, esto dispara la detección automática de "portal cautivo" de Android/iOS/Windows en la mayoría de los casos (se abre solo un navegador con la página de configuración al conectar a la red). Si el sistema operativo no lo detecta automáticamente, `192.168.4.1` siempre funciona navegando a mano.
+3. `GET /` sirve un formulario HTML normal (controles nativos: texto, password, `<input type="time">` para las horas — con selector nativo en móvil, `<input type="number">` para los campos numéricos), prellenado con la configuración actual guardada.
+4. `POST /save` guarda todos los campos del formulario a la vez (a diferencia del diseño BLE por característica individual, aquí no hace falta un paso `APPLY_CONFIG` separado — el propio HTML envía todos los campos juntos en cada submit), responde una página de confirmación, y el orquestador persiste en NVS + reinicia.
+5. `POST /ota` y `POST /factory-reset`: botones sueltos en la misma página que disparan esas acciones (banderas leídas por el orquestador, igual que el guardado).
 
-`FACTORY_RESET` en `COMMAND`: borra la config de NVS (`configured = false`) y reinicia — vuelve directo a `UNCONFIGURED`.
+### `ProvisioningPortal` (`src/web/ProvisioningPortal.{h,cpp}`)
+
+- Envuelve `WebServer` (puerto 80) + `DNSServer` (puerto 53), ambos bundled en `arduino-esp32`, sin dependencias externas nuevas.
+- `hasClient()` expone `WiFi.softAPgetStationNum() > 0` — usado por el orquestador tanto para el patrón de LED (`ALL SOLID` mientras haya alguien conectado, `BLINK_SLOW` si no) como para decidir cuándo cerrar `PORTAL_WINDOW` (no se cierra por timeout mientras haya alguien conectado; se cierra en el momento en que se desconecta el último cliente).
+- `takeConfigToSave()` / `takeOtaRequested()` / `takeFactoryResetRequested()`: banderas de "un solo uso" (se limpian al leerlas) que el orquestador consulta cada `loop()` — sin colas, ver sección de tareas.
+- La plantilla HTML va embebida como constante `R"HTML(...)"` en el propio `.cpp`; los valores actuales se insertan con `String::replace()` sobre placeholders `%CAMPO%`, con un `htmlEscape()` mínimo (`&`, `"`, `<`, `>`) para no romper el HTML si algún valor guardado contiene esos caracteres.
 
 ## Cliente Woffu
 
@@ -127,7 +127,7 @@ Content-Type: application/x-www-form-urlencoded
 grant_type=password&username=<user>&password=<pass>
 ```
 
-El login va contra el host fijo `app.woffu.com`, el propio JWT devuelto ya lleva embebido el `CompanyId`. Se ha verificado (`tools/check_status.py`) que ese mismo host fijo también sirve para la llamada de estado de fichaje (ver más abajo), así que **no hace falta pedir el dominio/subdominio de empresa** en el provisioning — un campo menos que configurar por BLE.
+El login va contra el host fijo `app.woffu.com`, el propio JWT devuelto ya lleva embebido el `CompanyId`. Se ha verificado (`tools/check_status.py`) que ese mismo host fijo también sirve para la llamada de estado de fichaje (ver más abajo), así que **no hace falta pedir el dominio/subdominio de empresa** en el provisioning — un campo menos que rellenar en el portal.
 
 Respuesta:
 ```json
@@ -184,7 +184,8 @@ Cualquier otro caso (respuesta inesperada, error HTTP, timeout, JSON inválido) 
 
 - GPIOs por defecto: R=25, Y=26, G=27 (libres en un ESP32 DevKit genérico, no son strapping pins). Ajustables en `AppStateMachine.cpp` si el cableado real difiere.
 - 3 canales LEDC (PWM), activo-alto (cátodo común, confirmado). La versión del core `arduino-esp32` instalada por PlatformIO usa la API por canal (`ledcSetup`/`ledcAttachPin`/`ledcWrite(channel, duty)`), no la API más nueva por pin (`ledcAttach`) — canales fijos 0/1/2 para R/Y/G.
-- `LedTask` interpreta `{color, mode, brightness}` de la cola: `SOLID` (duty fijo), `BLINK_SLOW` (ciclo ~1000ms), `BLINK_FAST` (~250ms), `OFF` (duty 0). `color = ALL` enciende los tres a la vez (patrón de "no configurado").
+- `LedTask` interpreta `{color, mode, brightness}` de la cola: `SOLID` (duty fijo), `BLINK_SLOW` (ciclo ~1000ms), `BLINK_FAST` (~250ms, disponible pero sin uso actualmente), `OFF` (duty 0). `color = ALL` enciende los tres a la vez.
+- En `UNCONFIGURED` y `PORTAL_WINDOW` el patrón depende solo de si hay alguien conectado a la red WiFi propia (`hasClient()`): `ALL` + `BLINK_SLOW` si no hay nadie, `ALL` + `SOLID` mientras haya alguien conectado.
 - Brillo (`brightness` de la config) se aplica como escala del duty cycle cuando el LED está en fase "encendido".
 
 ## CI/CD — release y publicación del firmware

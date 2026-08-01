@@ -4,24 +4,27 @@ namespace {
 constexpr uint8_t kPinLedRed = 25;
 constexpr uint8_t kPinLedYellow = 26;
 constexpr uint8_t kPinLedGreen = 27;
+constexpr uint32_t kPortalWaitMs = 30000; // espera inicial sin nadie conectado; una vez conectado no hay límite hasta que se desconecta
 
-LedCommand ledForUnconfigured(uint8_t brightness) {
+LedCommand ledSlowBlink(LedColor color, uint8_t brightness) {
     LedCommand cmd;
-    cmd.color = LedColor::ALL;
+    cmd.color = color;
     cmd.mode = LedMode::BLINK_SLOW;
     cmd.brightness = brightness;
     return cmd;
 }
 
-LedCommand ledForBleWindow(WoffuStatus status, uint8_t brightness) {
+LedCommand ledOff() {
     LedCommand cmd;
-    cmd.color = LedColor::YELLOW;
-    if (status == WoffuStatus::CLOCKED_IN) {
-        cmd.color = LedColor::GREEN;
-    } else if (status == WoffuStatus::CLOCKED_OUT) {
-        cmd.color = LedColor::RED;
-    }
-    cmd.mode = LedMode::BLINK_SLOW;
+    cmd.color = LedColor::OFF;
+    cmd.mode = LedMode::OFF;
+    return cmd;
+}
+
+LedCommand ledAllSolid(uint8_t brightness) {
+    LedCommand cmd;
+    cmd.color = LedColor::ALL;
+    cmd.mode = LedMode::SOLID;
     cmd.brightness = brightness;
     return cmd;
 }
@@ -31,14 +34,14 @@ void AppStateMachine::begin() {
     config_.begin();
     led_.begin(kPinLedRed, kPinLedYellow, kPinLedGreen);
 
-    state_ = config_.get().configured ? AppState::BLE_WINDOW : AppState::UNCONFIGURED;
+    state_ = config_.get().configured ? AppState::PORTAL_WINDOW : AppState::UNCONFIGURED;
 
     switch (state_) {
         case AppState::UNCONFIGURED:
             enterUnconfigured();
             break;
-        case AppState::BLE_WINDOW:
-            enterBleWindow();
+        case AppState::PORTAL_WINDOW:
+            enterPortalWindow();
             break;
         default:
             break;
@@ -46,7 +49,9 @@ void AppStateMachine::begin() {
 }
 
 void AppStateMachine::loop() {
-    handleBleEvents();
+    if (state_ != AppState::RUNNING) {
+        handlePortal();
+    }
 
     static bool wasWifiConnected = false;
     bool wifiConnected = wifi_.isConnected();
@@ -55,25 +60,73 @@ void AppStateMachine::loop() {
         timeSync_.begin(config_.get().timezone);
     }
     wasWifiConnected = wifiConnected;
+
+    if (state_ == AppState::PORTAL_WINDOW && !portalClientConnected_ && millis() >= portalWindowDeadlineMs_) {
+        enterRunning();
+    }
 }
 
 void AppStateMachine::enterUnconfigured() {
-    ble_.begin();
-    led_.set(ledForUnconfigured(config_.get().brightness));
+    portal_.begin(config_.get());
+    updateLedForCurrentState();
 }
 
-void AppStateMachine::enterBleWindow() {
-    ble_.begin();
-    led_.set(ledForBleWindow(WoffuStatus::UNKNOWN, config_.get().brightness));
-    wifi_.begin(config_.get().wifiSsid, config_.get().wifiPassword);
+void AppStateMachine::enterPortalWindow() {
+    // El portal va solo (sin STA en paralelo): la conexión a la WiFi real
+    // se pospone a enterRunning(), tras cerrarse la ventana de configuración.
+    portal_.begin(config_.get());
+    portalWindowDeadlineMs_ = millis() + kPortalWaitMs;
+    updateLedForCurrentState();
 }
 
 void AppStateMachine::enterRunning() {
-    ble_.stop();
+    state_ = AppState::RUNNING;
+    portal_.stop();
+    wifi_.begin(config_.get().wifiSsid, config_.get().wifiPassword);
+    led_.set(ledOff());
 }
 
-void AppStateMachine::handleBleEvents() {
-    BleEvent event;
-    while (ble_.pollEvent(event)) {
+void AppStateMachine::handlePortal() {
+    portal_.loop();
+
+    bool connected = portal_.hasClient();
+    if (connected != portalClientConnected_) {
+        portalClientConnected_ = connected;
+        updateLedForCurrentState();
+        if (!connected && state_ == AppState::PORTAL_WINDOW) {
+            // Se acaba de desconectar el último cliente: cerramos ya la ventana.
+            enterRunning();
+            return;
+        }
     }
+
+    DeviceConfig newConfig;
+    if (portal_.takeConfigToSave(newConfig)) {
+        saveConfigAndReboot(newConfig);
+        return;
+    }
+
+    if (portal_.takeOtaRequested()) {
+        otaUpdater_.checkAndUpdate();
+    }
+
+    if (portal_.takeFactoryResetRequested()) {
+        config_.factoryReset();
+        delay(300);
+        ESP.restart();
+    }
+}
+
+void AppStateMachine::saveConfigAndReboot(const DeviceConfig& newConfig) {
+    config_.save(newConfig);
+    delay(300);
+    ESP.restart();
+}
+
+void AppStateMachine::updateLedForCurrentState() {
+    if (state_ != AppState::UNCONFIGURED && state_ != AppState::PORTAL_WINDOW) {
+        return;
+    }
+    uint8_t brightness = config_.get().brightness;
+    led_.set(portalClientConnected_ ? ledAllSolid(brightness) : ledSlowBlink(LedColor::ALL, brightness));
 }

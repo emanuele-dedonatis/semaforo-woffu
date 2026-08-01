@@ -3,7 +3,7 @@
 #include <Arduino.h>
 #include "config/Config.h"
 #include "app/Scheduler.h"
-#include "ble/BleProvisioning.h"
+#include "web/ProvisioningPortal.h"
 #include "led/LedController.h"
 #include "net/WifiManager.h"
 #include "net/TimeSync.h"
@@ -13,7 +13,7 @@
 enum class AppState : uint8_t {
     INIT,
     UNCONFIGURED,
-    BLE_WINDOW,
+    PORTAL_WINDOW,
     RUNNING,
 };
 
@@ -24,14 +24,18 @@ public:
 
 private:
     void enterUnconfigured();
-    void enterBleWindow();
+    void enterPortalWindow();
     void enterRunning();
-    void handleBleEvents();
+    void handlePortal();
+    void saveConfigAndReboot(const DeviceConfig& newConfig);
+    void updateLedForCurrentState();
 
     AppState state_ = AppState::INIT;
+    uint32_t portalWindowDeadlineMs_ = 0;
+    bool portalClientConnected_ = false;
     Config config_;
     Scheduler scheduler_;
-    BleProvisioning ble_;
+    ProvisioningPortal portal_;
     LedController led_;
     WifiManager wifi_;
     TimeSync timeSync_;
