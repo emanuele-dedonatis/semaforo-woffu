@@ -132,10 +132,12 @@ void AppStateMachine::enterUnconfigured() {
 }
 
 void AppStateMachine::enterPortalWindow() {
-    // El portal va solo (sin STA en paralelo): la conexión a la WiFi real
-    // se pospone a enterRunning(), tras cerrarse la ventana de configuración.
+    // AP (portal) + STA (WiFi real) en paralelo (WIFI_MODE_APSTA): sin la
+    // STA no hay salida a internet mientras el portal esta abierto, y el
+    // boton de OTA del propio portal la necesita para llegar a GitHub.
     Serial.println("Ventana de portal de configuracion abierta (10s, o hasta que se desconecte el cliente).");
     portal_.begin(config_.get());
+    wifi_.begin(config_.get().wifiSsid, config_.get().wifiPassword);
     portalWindowDeadlineMs_ = millis() + kPortalWaitMs;
     updateLedForCurrentState();
 }
@@ -144,7 +146,11 @@ void AppStateMachine::enterRunning() {
     state_ = AppState::RUNNING;
     Serial.println("Modo normal (RUNNING): portal apagado, conectando a la WiFi configurada.");
     portal_.stop();
-    wifi_.begin(config_.get().wifiSsid, config_.get().wifiPassword);
+    if (!wifi_.isConnected()) {
+        // Puede que ya este conectada desde PORTAL_WINDOW; evitar reconectar
+        // innecesariamente a la misma red.
+        wifi_.begin(config_.get().wifiSsid, config_.get().wifiPassword);
+    }
     scheduler_.configure(config_.get());
     woffuClient_.begin(config_.get().woffuUsername, config_.get().woffuPassword);
     led_.set(ledOff());
@@ -179,6 +185,13 @@ void AppStateMachine::handlePortal() {
 
     if (portal_.takeOtaRequested()) {
         Serial.println("Actualizacion OTA solicitada desde el portal. Comprobando...");
+        if (!wifi_.isConnected()) {
+            Serial.println("OTA: todavia sin conexion a la WiFi configurada.");
+            portal_.reportOtaStatus(
+                "OTA: el dispositivo todavia no tiene conexion a la WiFi configurada "
+                "(necesaria para llegar a GitHub). Espera unos segundos y vuelve a intentarlo.");
+            return;
+        }
         switch (otaUpdater_.checkAndUpdate()) {
             case OtaResult::UP_TO_DATE:
                 Serial.println("OTA: ya esta en la ultima version.");
