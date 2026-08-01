@@ -12,6 +12,16 @@ constexpr const char* kVersionUrl =
     "https://github.com/emanuele-dedonatis/semaforo-woffu/releases/latest/download/version.txt";
 constexpr const char* kFirmwareUrl =
     "https://github.com/emanuele-dedonatis/semaforo-woffu/releases/latest/download/firmware.bin";
+
+// HTTPClient::errorToString(-1) siempre dice "connection refused" tanto si
+// fallo el TCP connect como si fallo el handshake TLS (cert bundle, memoria,
+// etc.): WiFiClientSecure::lastError() guarda el motivo mbedtls real cuando
+// lo hay, asi que lo anexamos si esta disponible.
+String tlsErrorDetail(WiFiClientSecure& client) {
+    char buf[100];
+    int code = client.lastError(buf, sizeof(buf));
+    return code != 0 ? " (TLS: " + String(buf) + ")" : "";
+}
 }  // namespace
 
 OtaResult OtaUpdater::checkAndUpdate() {
@@ -33,7 +43,7 @@ OtaResult OtaUpdater::checkAndUpdate() {
     if (status != HTTP_CODE_OK) {
         lastErrorDetail_ = status > 0
             ? "Comprobando version.txt: HTTP " + String(status)
-            : "Comprobando version.txt: " + HTTPClient::errorToString(status);
+            : "Comprobando version.txt: " + HTTPClient::errorToString(status) + tlsErrorDetail(versionClient);
         http.end();
         return OtaResult::ERROR;
     }
@@ -56,7 +66,8 @@ OtaResult OtaUpdater::checkAndUpdate() {
         case HTTP_UPDATE_NO_UPDATES:
             return OtaResult::UP_TO_DATE;
         default:
-            lastErrorDetail_ = "Descargando firmware.bin: " + httpUpdate.getLastErrorString();
+            lastErrorDetail_ =
+                "Descargando firmware.bin: " + httpUpdate.getLastErrorString() + tlsErrorDetail(updateClient);
             return OtaResult::ERROR;
     }
 }
