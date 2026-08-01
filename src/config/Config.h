@@ -19,6 +19,7 @@ struct DeviceConfig {
     uint16_t pollActiveSeconds = 45;
     uint16_t pollPassiveSeconds = 900;
     uint8_t brightness = 180;
+    bool forceActiveWindow = false;
 };
 
 class Config {

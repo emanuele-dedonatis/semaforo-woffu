@@ -5,10 +5,7 @@
 #include <WiFiClientSecure.h>
 
 #include "net/CertBundle.h"
-
-#ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "0.0.0-dev"
-#endif
+#include "Version.h"
 
 namespace {
 constexpr const char* kVersionUrl =

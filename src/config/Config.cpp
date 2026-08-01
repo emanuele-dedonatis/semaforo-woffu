@@ -22,6 +22,7 @@ void Config::begin() {
     current_.pollActiveSeconds = prefs.getUShort("poll_act_s", 45);
     current_.pollPassiveSeconds = prefs.getUShort("poll_pas_s", 900);
     current_.brightness = prefs.getUChar("brightness", 180);
+    current_.forceActiveWindow = prefs.getBool("force_active", false);
 
     prefs.end();
 }
@@ -49,6 +50,7 @@ bool Config::save(const DeviceConfig& config) {
     prefs.putUShort("poll_act_s", config.pollActiveSeconds);
     prefs.putUShort("poll_pas_s", config.pollPassiveSeconds);
     prefs.putUChar("brightness", config.brightness);
+    prefs.putBool("force_active", config.forceActiveWindow);
 
     prefs.end();
 

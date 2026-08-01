@@ -48,6 +48,9 @@ Campos configurables desde el portal:
 - Horarios de ventanas activas y pasivas
 - Zona horaria
 - Brillo de los LEDs
+- Forzar ventana activa (para pruebas: ignora horario y fin de semana, ver `## Esquema de configuración` en Arquitectura.md)
+
+La página también muestra la versión de firmware actual (útil para comprobar visualmente que un OTA se aplicó).
 
 ### Disponibilidad del portal
 

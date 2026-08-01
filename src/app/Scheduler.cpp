@@ -5,6 +5,10 @@ void Scheduler::configure(const DeviceConfig& config) {
 }
 
 PollMode Scheduler::currentMode(uint16_t nowMinutesOfDay, uint8_t isoWeekday) const {
+    if (config_.forceActiveWindow) {
+        return PollMode::ACTIVE;
+    }
+
     constexpr uint8_t kIsoSaturday = 6;
     if (isoWeekday >= kIsoSaturday) {
         return PollMode::OFF;

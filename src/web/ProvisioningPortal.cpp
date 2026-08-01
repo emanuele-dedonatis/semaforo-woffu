@@ -4,6 +4,7 @@
 #include <DNSServer.h>
 #include <WiFi.h>
 #include <esp_mac.h>
+#include "Version.h"
 
 namespace {
 constexpr uint16_t kDnsPort = 53;
@@ -50,8 +51,13 @@ label{display:block;margin-top:1em;font-weight:bold}
 input{width:100%;padding:.5em;box-sizing:border-box;font-size:1em}
 button{margin-top:1.5em;padding:.7em 1.5em;font-size:1em}
 .row{display:flex;gap:1em}.row>div{flex:1}
+.checkbox-row{display:flex;align-items:center;gap:.5em;margin-top:1em}
+.checkbox-row input{width:auto}
+.checkbox-row label{margin-top:0}
+.version{color:#666;font-size:.85em;margin-top:-.5em}
 </style></head><body>
 <h1>Configurar Semaforo Woffu</h1>
+<p class="version">Firmware %VERSION%</p>
 <form method="POST" action="/save">
 <label>WiFi SSID</label><input name="ssid" value="%SSID%" required>
 <label>WiFi Password</label><input name="wifi_pass" type="password" value="%WIFI_PASS%">
@@ -71,6 +77,7 @@ button{margin-top:1.5em;padding:.7em 1.5em;font-size:1em}
 <div><label>Polling pasivo (s)</label><input name="poll_passive_s" type="number" min="30" value="%POLL_PASSIVE%"></div>
 </div>
 <label>Brillo LEDs (0-255)</label><input name="brightness" type="number" min="0" max="255" value="%BRIGHTNESS%">
+<div class="checkbox-row"><input name="force_active" type="checkbox" id="force_active" %FORCE_ACTIVE_CHECKED%><label for="force_active">Forzar ventana activa (pruebas, ignora horario y fin de semana)</label></div>
 <button type="submit">Guardar y reiniciar</button>
 </form>
 <hr>
@@ -167,6 +174,7 @@ bool ProvisioningPortal::takeFactoryResetRequested() {
 
 void ProvisioningPortal::handleRoot() {
     String page(kPageTemplate);
+    page.replace("%VERSION%", FIRMWARE_VERSION);
     page.replace("%SSID%", htmlEscape(current_.wifiSsid));
     page.replace("%WIFI_PASS%", htmlEscape(current_.wifiPassword));
     page.replace("%WOFFU_USER%", htmlEscape(current_.woffuUsername));
@@ -179,6 +187,7 @@ void ProvisioningPortal::handleRoot() {
     page.replace("%POLL_ACTIVE%", String(current_.pollActiveSeconds));
     page.replace("%POLL_PASSIVE%", String(current_.pollPassiveSeconds));
     page.replace("%BRIGHTNESS%", String(current_.brightness));
+    page.replace("%FORCE_ACTIVE_CHECKED%", current_.forceActiveWindow ? "checked" : "");
     server_->send(200, "text/html", page);
 }
 
@@ -204,6 +213,7 @@ void ProvisioningPortal::handleSave() {
     config.pollActiveSeconds = static_cast<uint16_t>(server_->arg("poll_active_s").toInt());
     config.pollPassiveSeconds = static_cast<uint16_t>(server_->arg("poll_passive_s").toInt());
     config.brightness = static_cast<uint8_t>(server_->arg("brightness").toInt());
+    config.forceActiveWindow = server_->hasArg("force_active");
 
     pendingConfig_ = config;
     pendingSave_ = true;

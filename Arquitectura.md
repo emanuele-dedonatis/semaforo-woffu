@@ -95,6 +95,7 @@ Namespace `cfg`:
 | `poll_active_s` | uint16 | `45` |
 | `poll_passive_s` | uint16 | `900` |
 | `brightness` | uint8 (0-255) | `180` |
+| `force_active` | bool | `false` |
 
 **Sin cifrado de NVS para el MVP**: cifrar de verdad el contenido de NVS en el ESP32 requiere activar *flash encryption* a nivel de eFuse (paso de fábrica/primer flasheo, irreversible en modo *release*, y que complica el flujo de OTA con firmas/cifrado de imágenes). Queda descartado para el MVP; la config permanece protegida solo por la password del AP de configuración. Se anota como posible mejora futura opcional para quien quiera más hardening.
 
@@ -106,7 +107,7 @@ Namespace `cfg`:
 
 1. El dispositivo crea su propia red WiFi (`WiFi.softAP`), SSID `Semaforo-XXXXXX` (últimos 3 bytes de la MAC, igual que antes), protegida con WPA2 y una password de 8 dígitos derivada de la MAC (mismo principio que el PIN de BLE, pero con longitud válida para WPA2-PSK, que exige mínimo 8 caracteres).
 2. Un `DNSServer` interno resuelve **todas** las consultas DNS a la IP propia del AP (`192.168.4.1`), y el `WebServer` redirige (302) cualquier ruta no reconocida a `/`. Combinados, esto dispara la detección automática de "portal cautivo" de Android/iOS/Windows en la mayoría de los casos (se abre solo un navegador con la página de configuración al conectar a la red). Si el sistema operativo no lo detecta automáticamente, `192.168.4.1` siempre funciona navegando a mano.
-3. `GET /` sirve un formulario HTML normal (controles nativos: texto, password, `<input type="time">` para las horas — con selector nativo en móvil, `<input type="number">` para los campos numéricos), prellenado con la configuración actual guardada.
+3. `GET /` sirve un formulario HTML normal (controles nativos: texto, password, `<input type="time">` para las horas — con selector nativo en móvil, `<input type="number">` para los campos numéricos), prellenado con la configuración actual guardada. La página muestra también la versión de firmware actual (`FIRMWARE_VERSION`, ver `## OTA — detalle de implementación`), útil para confirmar visualmente que un OTA se aplicó. Por el mismo motivo, también se imprime por Serial al arrancar (`main.cpp`).
 4. `POST /save` guarda todos los campos del formulario a la vez (a diferencia del diseño BLE por característica individual, aquí no hace falta un paso `APPLY_CONFIG` separado — el propio HTML envía todos los campos juntos en cada submit), responde una página de confirmación, y el orquestador persiste en NVS + reinicia.
 5. `POST /ota` y `POST /factory-reset`: botones sueltos en la misma página que disparan esas acciones (banderas leídas por el orquestador, igual que el guardado).
 
