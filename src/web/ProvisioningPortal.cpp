@@ -55,9 +55,11 @@ button{margin-top:1.5em;padding:.7em 1.5em;font-size:1em}
 .checkbox-row input{width:auto}
 .checkbox-row label{margin-top:0}
 .version{color:#666;font-size:.85em;margin-top:-.5em}
+.notice{background:#eef;padding:.6em 1em;border-radius:4px;margin-top:1em}
 </style></head><body>
 <h1>Configurar Semaforo Woffu</h1>
 <p class="version">Firmware %VERSION%</p>
+%OTA_STATUS%
 <form method="POST" action="/save">
 <label>WiFi SSID</label><input name="ssid" value="%SSID%" required>
 <label>WiFi Password</label><input name="wifi_pass" type="password" value="%WIFI_PASS%">
@@ -89,7 +91,9 @@ button{margin-top:1.5em;padding:.7em 1.5em;font-size:1em}
 const char kSavedPage[] =
     "<!doctype html><html><body><h1>Guardado</h1><p>Reiniciando...</p></body></html>";
 const char kOtaPage[] =
-    "<!doctype html><html><body><h1>OK</h1><p>Comprobando actualizacion.</p></body></html>";
+    "<!doctype html><html><head><meta http-equiv=\"refresh\" content=\"5;url=/\"></head>"
+    "<body><h1>Comprobando...</h1><p>Comprobando actualizacion OTA. Esta pagina se "
+    "recargara sola; si la comprobacion tarda, espera y vuelve a cargar /.</p></body></html>";
 const char kFactoryResetPage[] =
     "<!doctype html><html><body><h1>OK</h1><p>Restableciendo de fabrica y reiniciando...</p></body></html>";
 }
@@ -172,9 +176,16 @@ bool ProvisioningPortal::takeFactoryResetRequested() {
     return value;
 }
 
+void ProvisioningPortal::reportOtaStatus(const String& message) {
+    otaStatusMessage_ = message;
+}
+
 void ProvisioningPortal::handleRoot() {
     String page(kPageTemplate);
     page.replace("%VERSION%", FIRMWARE_VERSION);
+    page.replace("%OTA_STATUS%", otaStatusMessage_.isEmpty()
+        ? ""
+        : "<p class=\"notice\">" + htmlEscape(otaStatusMessage_) + "</p>");
     page.replace("%SSID%", htmlEscape(current_.wifiSsid));
     page.replace("%WIFI_PASS%", htmlEscape(current_.wifiPassword));
     page.replace("%WOFFU_USER%", htmlEscape(current_.woffuUsername));

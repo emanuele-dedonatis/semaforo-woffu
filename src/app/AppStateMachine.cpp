@@ -182,12 +182,18 @@ void AppStateMachine::handlePortal() {
         switch (otaUpdater_.checkAndUpdate()) {
             case OtaResult::UP_TO_DATE:
                 Serial.println("OTA: ya esta en la ultima version.");
+                portal_.reportOtaStatus("OTA: ya tienes la ultima version instalada.");
                 break;
             case OtaResult::UPDATED:
+                // httpUpdate.rebootOnUpdate(true) reinicia dentro de checkAndUpdate() en
+                // caso de exito: si llegamos aqui es que, excepcionalmente, no reinicio.
                 Serial.println("OTA: actualizado correctamente, reiniciando...");
+                portal_.reportOtaStatus("OTA: actualizado correctamente, reiniciando...");
                 break;
             case OtaResult::ERROR:
-                Serial.println("OTA: error comprobando o descargando la actualizacion.");
+                Serial.printf("OTA: error comprobando o descargando la actualizacion (%s).\n",
+                               otaUpdater_.lastErrorDetail().c_str());
+                portal_.reportOtaStatus("OTA: error - " + otaUpdater_.lastErrorDetail());
                 break;
         }
     }

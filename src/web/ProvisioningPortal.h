@@ -16,6 +16,7 @@ public:
     bool takeConfigToSave(DeviceConfig& out);
     bool takeOtaRequested();
     bool takeFactoryResetRequested();
+    void reportOtaStatus(const String& message);
 
 private:
     void handleRoot();
@@ -32,4 +33,5 @@ private:
     DeviceConfig pendingConfig_;
     bool pendingOta_ = false;
     bool pendingFactoryReset_ = false;
+    String otaStatusMessage_;
 };

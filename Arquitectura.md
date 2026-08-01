@@ -194,6 +194,8 @@ Cualquier otro caso (respuesta inesperada, error HTTP, timeout, JSON inválido) 
 - Validación TLS: certificate bundle, ver `## Certificate bundle (TLS)`.
 - La versión actual del firmware se embebe en tiempo de compilación con el build flag `FIRMWARE_VERSION` (p.ej. `-D FIRMWARE_VERSION=\"1.4.0\"`), inyectado por `tools/build_firmware.sh` durante el release (ver `## CI/CD`). Sin ese flag (build local de desarrollo), `OtaUpdater.cpp` usa el valor por defecto `"0.0.0-dev"` vía `#ifndef`.
 - Tras un flasheo OTA correcto, `HTTPUpdate` deja marcado el nuevo slot como boot y reinicia solo.
+- Las URLs `releases/latest/download/*` de GitHub responden con **redirecciones 302** (hacia la release concreta y de ahí al CDN `objects.githubusercontent.com`). Tanto `HTTPClient` como `HTTPUpdate` traen las redirecciones **desactivadas por defecto**, así que hay que activarlas explícitamente con `setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS)` en ambos (comprobación de `version.txt` y descarga de `firmware.bin`); sin esto, `checkAndUpdate()` falla siempre con el código HTTP de la redirección en vez de comprobar la versión real.
+- `OtaUpdater::lastErrorDetail()` guarda el motivo concreto del último fallo (código HTTP o `HTTPClient::errorToString()` para la comprobación de versión, `httpUpdate.getLastErrorString()` para la descarga/instalación), que el orquestador vuelca por Serial y en el portal (`ProvisioningPortal::reportOtaStatus()`) — el botón "Comprobar actualización OTA" ya no devuelve un "OK" ciego, sino que la propia página `/` muestra el resultado real de la última comprobación tras recargar.
 
 ## LED Controller
 
