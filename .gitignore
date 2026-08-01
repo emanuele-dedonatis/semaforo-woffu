@@ -5,5 +5,12 @@ __pycache__/
 # PlatformIO
 .pio/
 
+# Node (semantic-release)
+node_modules/
+
+# Assets generados por el release (tools/build_firmware.sh)
+/firmware.bin
+/version.txt
+
 # VSCode (auto-generado por la extensión PlatformIO, rutas absolutas de máquina)
 .vscode/
