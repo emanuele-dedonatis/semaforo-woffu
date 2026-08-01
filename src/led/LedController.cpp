@@ -6,6 +6,20 @@ constexpr uint8_t kPwmResolutionBits = 8;
 constexpr TickType_t kSlowPeriod = pdMS_TO_TICKS(1000);
 constexpr TickType_t kFastPeriod = pdMS_TO_TICKS(250);
 constexpr TickType_t kPollPeriod = pdMS_TO_TICKS(50);
+
+// El verde de este módulo se ve más apagado que rojo/amarillo al mismo duty
+// (Vf del LED verde más alta, misma resistencia en serie que los demás en
+// el módulo -> menos corriente). Se compensa con una ganancia por canal;
+// ajustar kGreenScalePercent a ojo si tras un cambio de módulo vuelve a
+// verse desequilibrado.
+constexpr uint16_t kRedScalePercent = 100;
+constexpr uint16_t kYellowScalePercent = 100;
+constexpr uint16_t kGreenScalePercent = 180;
+
+uint32_t scaledDuty(uint32_t duty, uint16_t scalePercent) {
+    uint32_t scaled = (duty * scalePercent) / 100;
+    return scaled > 255 ? 255 : scaled;
+}
 }
 
 void LedController::begin(uint8_t pinRed, uint8_t pinYellow, uint8_t pinGreen) {
@@ -57,8 +71,8 @@ void LedController::taskFn(void* params) {
         bool yellowOn = current.color == LedColor::YELLOW || current.color == LedColor::ALL;
         bool greenOn = current.color == LedColor::GREEN || current.color == LedColor::ALL;
 
-        ledcWrite(kChannelRed, redOn ? duty : 0);
-        ledcWrite(kChannelYellow, yellowOn ? duty : 0);
-        ledcWrite(kChannelGreen, greenOn ? duty : 0);
+        ledcWrite(kChannelRed, redOn ? scaledDuty(duty, kRedScalePercent) : 0);
+        ledcWrite(kChannelYellow, yellowOn ? scaledDuty(duty, kYellowScalePercent) : 0);
+        ledcWrite(kChannelGreen, greenOn ? scaledDuty(duty, kGreenScalePercent) : 0);
     }
 }
