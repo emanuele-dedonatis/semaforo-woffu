@@ -27,12 +27,20 @@ private:
     void enterPortalWindow();
     void enterRunning();
     void handlePortal();
+    void handleRunning();
     void saveConfigAndReboot(const DeviceConfig& newConfig);
     void updateLedForCurrentState();
 
     AppState state_ = AppState::INIT;
     uint32_t portalWindowDeadlineMs_ = 0;
     bool portalClientConnected_ = false;
+    PollMode runningPollMode_ = PollMode::OFF;
+    bool runningPollModeKnown_ = false;
+    uint32_t nextPollAtMs_ = 0;
+    bool wifiWasConnected_ = false;
+    uint32_t wifiConnectedAtMs_ = 0;
+    bool timeWasSynced_ = false;
+    bool timeSyncTimeoutLogged_ = false;
     Config config_;
     Scheduler scheduler_;
     ProvisioningPortal portal_;
