@@ -25,3 +25,7 @@ Este repo usa **Conventional Commits** de forma estricta, para poder automatizar
 ```
 
 Tipos habituales: `feat`, `fix`, `docs`, `refactor`, `chore`, `test`, `build`, `ci`. Usa `!` o un footer `BREAKING CHANGE:` para cambios incompatibles.
+
+## Git: commit sí, push no
+
+Puedes hacer commit de los cambios de forma automática (sin pedir confirmación), pero **nunca hagas push a menos que el usuario lo pida explícitamente**: cada push a `main` dispara una release automática (ver CI/CD arriba), y el usuario controla cuándo quiere publicarla.
