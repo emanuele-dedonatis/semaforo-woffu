@@ -13,12 +13,13 @@ Compatible con cualquier placa ESP32 que tenga WiFi (el provisioning y el OTA so
   - 🟢 Verde = fichado
   - 🟡 Amarillo = estado desconocido (p.ej. no es posible conectarse con Woffu)
 - Autenticación con Woffu por **usuario/password** (no API key, ya que solo los admins pueden crearlas).
-- Polling adaptativo según franja horaria, para no ser agresivo con la API fuera de las ventanas donde el estado puede cambiar:
-  - **Ventanas activas** (entrada y salida, p.ej. 07:30–09:00 y 14:00–18:00, configurables): cada 30-60s. Mismas ventanas para todos los días laborables (lun-vie).
-  - **Ventana pasiva** (entre las dos ventanas activas): cada 15 min.
-  - **Resto del día / fin de semana**: apagado (tanto el LED como las llamadas a la API).
+- Polling adaptativo, para no ser agresivo con la API fuera de las ventanas donde el estado puede cambiar. Para simplificar la configuración, el usuario solo indica una **ventana de encendido/apagado** (por defecto 07:30–19:00, configurable); dentro de ella, el propio dispositivo consulta a Woffu la jornada del día (`GET /api/svc/core/users/{userId}/diarysummaries/workday`) para decidir el ritmo, sin que haga falta configurar nada más:
+  - **Ventana pasiva** (el tramo `startTime`–`endTime` que devuelve Woffu para el día, la franja de fichaje habitual): cada 15 min.
+  - **Resto de la ventana de encendido** (fuera de ese tramo, p.ej. antes de entrar o después de salir): cada minuto.
+  - **Fuera de la ventana de encendido, fin de semana o festivo** (`isWeekend`/`isHoliday` de la respuesta de Woffu): apagado (tanto el LED como las llamadas a la API de fichaje). Si por algún fallo no se puede consultar la jornada del día, se asume ventana activa (más agresiva pero segura) hasta el día siguiente.
+  - Todas estas decisiones (por qué se apaga, por qué pasa a pasiva/activa) se registran de forma explicativa por el puerto serie.
 - Sin reintentos ante fallo de conexión (WiFi o API Woffu): un fallo pasa el LED a ámbar y se reintenta en el siguiente ciclo de polling normal (activo/pasivo), sin backoff adicional.
-- Sincronización horaria automática por NTP al arrancar. Zona horaria configurable desde el portal.
+- Sincronización horaria automática por NTP al arrancar. Zona horaria detectada automáticamente por geolocalización de la IP pública (sin campo que configurar en el portal, ver `## Cliente Woffu`/`TimeSync` en Arquitectura.md).
 
 ## Funcionalidades futuras
 
@@ -28,7 +29,7 @@ Compatible con cualquier placa ESP32 que tenga WiFi (el provisioning y el OTA so
 ## Hardware
 
 - Placa de LEDs de semáforo con 4 pines: GND, R, Y, G (**cátodo común**: R/Y/G se encienden en activo-alto).
-- Brillo por PWM, configurable desde el portal.
+- Brillo por PWM, siempre al máximo (255) — ya no es configurable desde el portal.
 
 ## OTA
 
@@ -45,10 +46,8 @@ Campos configurables desde el portal:
 
 - SSID / password del WiFi
 - Usuario / password de Woffu
-- Horarios de ventanas activas y pasivas
-- Zona horaria
-- Brillo de los LEDs
-- Forzar ventana activa (para pruebas: ignora horario y fin de semana, ver `## Esquema de configuración` en Arquitectura.md)
+- Horario de encendido/apagado
+- Forzar ventana activa (para pruebas: ignora horario y la jornada que reporta Woffu, ver `## Esquema de configuración` en Arquitectura.md)
 
 La página también muestra la versión de firmware actual (útil para comprobar visualmente que un OTA se aplicó).
 

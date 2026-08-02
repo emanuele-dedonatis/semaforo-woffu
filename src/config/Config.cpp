@@ -14,14 +14,8 @@ void Config::begin() {
     current_.wifiPassword = prefs.getString("wifi_pass", "");
     current_.woffuUsername = prefs.getString("woffu_user", "");
     current_.woffuPassword = prefs.getString("woffu_pass", "");
-    current_.timezone = prefs.getString("tz", "UTC0");
-    current_.windowIn.startMinutes = prefs.getUShort("win_in_s", 450);
-    current_.windowIn.endMinutes = prefs.getUShort("win_in_e", 540);
-    current_.windowOut.startMinutes = prefs.getUShort("win_out_s", 840);
-    current_.windowOut.endMinutes = prefs.getUShort("win_out_e", 1080);
-    current_.pollActiveSeconds = prefs.getUShort("poll_act_s", 45);
-    current_.pollPassiveSeconds = prefs.getUShort("poll_pas_s", 900);
-    current_.brightness = prefs.getUChar("brightness", 180);
+    current_.activeWindow.startMinutes = prefs.getUShort("win_s", 450);
+    current_.activeWindow.endMinutes = prefs.getUShort("win_e", 1140);
     current_.forceActiveWindow = prefs.getBool("force_active", false);
 
     prefs.end();
@@ -42,14 +36,8 @@ bool Config::save(const DeviceConfig& config) {
     prefs.putString("wifi_pass", config.wifiPassword);
     prefs.putString("woffu_user", config.woffuUsername);
     prefs.putString("woffu_pass", config.woffuPassword);
-    prefs.putString("tz", config.timezone);
-    prefs.putUShort("win_in_s", config.windowIn.startMinutes);
-    prefs.putUShort("win_in_e", config.windowIn.endMinutes);
-    prefs.putUShort("win_out_s", config.windowOut.startMinutes);
-    prefs.putUShort("win_out_e", config.windowOut.endMinutes);
-    prefs.putUShort("poll_act_s", config.pollActiveSeconds);
-    prefs.putUShort("poll_pas_s", config.pollPassiveSeconds);
-    prefs.putUChar("brightness", config.brightness);
+    prefs.putUShort("win_s", config.activeWindow.startMinutes);
+    prefs.putUShort("win_e", config.activeWindow.endMinutes);
     prefs.putBool("force_active", config.forceActiveWindow);
 
     prefs.end();

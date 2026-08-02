@@ -48,6 +48,10 @@ Comunicación:
 - `ledCmdQueue` (orquestador → LedTask): `{color, mode: OFF|SOLID|BLINK_SLOW|BLINK_FAST, brightness}` — sigue siendo una cola FreeRTOS porque cruza tareas de verdad.
 - Orquestador ↔ `ProvisioningPortal`: **sin cola** — como los handlers HTTP se ejecutan síncronamente dentro de la misma llamada a `portal_.loop()` (propia tarea `loopTask`), basta con banderas/valores miembro normales (`takeConfigToSave()`, `takeOtaRequested()`, `takeFactoryResetRequested()`), sin necesidad de mecanismos cross-task.
 
+### Logging (`Log.{h,cpp}`)
+
+`logPrintf()`/`logPrintln()` son sustitutos directos de `Serial.printf()`/`Serial.println()` — usados en todo el firmware en vez de `Serial` para que cada línea del log lleve un timestamp `[HH:MM:SS]` (hora local, una vez que `TimeSync` ha sincronizado por NTP; ver `kNtpSyncedThreshold` en `TimeSync.h`) o `[+Ns]` (segundos desde el arranque, mientras todavía no hay hora sincronizada — arranque, portal de configuración, fallos de red antes de conectar). Solo `Serial.begin()` en `main.cpp` sigue llamando a `Serial` directamente.
+
 ## Estructura del proyecto (PlatformIO)
 
 ```
@@ -55,14 +59,15 @@ platformio.ini
 partitions.csv
 src/
   main.cpp                 # setup()/loop(), arranque de tareas
+  Log.{h,cpp}               # logPrintf()/logPrintln(): sustituyen a Serial.printf()/println() anteponiendo timestamp
   app/
     AppStateMachine.{h,cpp}   # estados de arriba, orquestación
-    Scheduler.{h,cpp}         # ventanas activa/pasiva/off → intervalo de poll
+    Scheduler.{h,cpp}         # ventana encendido/apagado + jornada Woffu → modo activo/pasivo/off
   config/
     Config.{h,cpp}            # struct + wrapper sobre Preferences (NVS)
   net/
     WifiManager.{h,cpp}
-    TimeSync.{h,cpp}          # NTP + zona horaria (setenv TZ + configTzTime)
+    TimeSync.{h,cpp}          # zona horaria por geolocalizacion de IP + NTP (configTime)
     WoffuClient.{h,cpp}       # llamadas a la API de Woffu
     OtaUpdater.{h,cpp}        # HTTPUpdate contra GitHub Releases
     CertBundle.{h,cpp}        # adjunta el bundle de CAs embebido a un WiFiClientSecure
@@ -89,13 +94,10 @@ Namespace `cfg`:
 | `wifi_pass` | string | |
 | `woffu_user` | string | |
 | `woffu_pass` | string | |
-| `tz` | string (POSIX TZ) | `CET-1CEST,M3.5.0,M10.5.0/3` |
-| `win_in` | `{start,end}` (minutos del día) | `450,540` (07:30–09:00) |
-| `win_out` | `{start,end}` | `840,1080` (14:00–18:00) |
-| `poll_active_s` | uint16 | `45` |
-| `poll_passive_s` | uint16 | `900` |
-| `brightness` | uint8 (0-255) | `180` |
+| `win_s`/`win_e` | uint16 (minutos del día) | `450,1140` (07:30–19:00) |
 | `force_active` | bool | `false` |
+
+Los ritmos de polling (activo ~60s, pasivo ~900s) ya no son configurables: son constantes fijas en `Scheduler.cpp` (ver `## Cliente Woffu` y `## Scheduler`). El brillo tampoco: `LedCommand::brightness` vale siempre 255 (máximo), ver `## LED Controller`.
 
 **Sin cifrado de NVS para el MVP**: cifrar de verdad el contenido de NVS en el ESP32 requiere activar *flash encryption* a nivel de eFuse (paso de fábrica/primer flasheo, irreversible en modo *release*, y que complica el flujo de OTA con firmas/cifrado de imágenes). Queda descartado para el MVP; la config permanece protegida solo por la password del AP de configuración. Se anota como posible mejora futura opcional para quien quiera más hardening.
 
@@ -173,9 +175,66 @@ Lógica de interpretación (puede haber varios slots en el día, p.ej. con pausa
 
 Cualquier otro caso (respuesta inesperada, error HTTP, timeout, JSON inválido) → ámbar, sin reintento, como ya definido en Requisitos.md.
 
+### Usuario actual (para saber el `userId`)
+
+```
+GET https://app.woffu.com/api/users
+Authorization: Bearer <accessToken>
+```
+
+Devuelve el perfil completo del usuario logueado; de esa respuesta solo interesa `UserId`, necesario para construir la URL de la jornada del día (ver más abajo). Se pide una única vez por arranque, justo antes de la primera consulta de jornada, y se cachea en RAM junto al `accessToken` (mismo motivo: no persistir en NVS sin cifrar).
+
+### Jornada del día (ventana pasiva de fichaje, fin de semana, festivo)
+
+```
+GET https://app.woffu.com/api/svc/core/users/{userId}/diarysummaries/workday
+Authorization: Bearer <accessToken>
+```
+
+Devuelve el horario habitual de fichaje del día actual (el servidor decide qué es "hoy", igual que en `/signs/slots`):
+
+```json
+{
+  "startTime": "09:00:00",
+  "endTime": "14:00:00",
+  "isWeekend": false,
+  "isHoliday": false,
+  ...
+}
+```
+
+`startTime`/`endTime` marcan la **ventana pasiva** (tramo en el que se espera que el usuario ya esté fichado, así que el estado cambia poco y basta con comprobarlo cada 15 min); el resto de la ventana de encendido configurada por el usuario es **ventana activa** (cada 30-60s). `isWeekend`/`isHoliday` a `true` apaga el dispositivo entero, sin llamar a `/signs/slots`. Ver `## Scheduler` para la lógica completa y `AppStateMachine::refreshWorkdayInfo()` para el cacheo (una consulta por día, dentro de la ventana de encendido).
+
 ### TLS
 
 `app.woffu.com` por HTTPS — usar el certificate bundle de `arduino-esp32` (igual que para OTA) en vez de pinnear certificados. Ver detalle de cómo se genera y embebe en `## Certificate bundle (TLS)`.
+
+## Scheduler
+
+`Scheduler::currentMode()` decide `ACTIVE`/`PASSIVE`/`OFF` combinando, por este orden:
+
+1. `force_active` (config): si está activo, siempre `ACTIVE` — ignora la ventana de encendido y la jornada de Woffu para decidir el modo (para pruebas, sin necesidad de esperar a la franja horaria real).
+2. Ventana de encendido/apagado configurada por el usuario (`activeWindow` en `DeviceConfig`): fuera de ella, `OFF` — no se llama ni a `/diarysummaries/workday` ni a `/signs/slots`.
+3. Dentro de la ventana de encendido, con la última jornada obtenida de Woffu (`WorkdayInfo`, cacheada por `AppStateMachine` una vez al día, ver arriba): `isWeekend`/`isHoliday` → `OFF`; dentro de `startTime`-`endTime` → `PASSIVE`; fuera → `ACTIVE`.
+4. Si todavía no se ha podido obtener la jornada del día (fallo de red/API, o arranque muy reciente), se asume `ACTIVE` — opción más agresiva con la API pero que nunca deja el semáforo apagado por error; se reintenta al día siguiente (mismo criterio de "sin reintentos adicionales" que el resto del cliente Woffu).
+
+`AppStateMachine::refreshWorkdayInfo()` (login + `/users` + `/workday`) se dispara una vez al día tanto dentro de la ventana de encendido como, aparte, siempre que `force_active` esté activo — en este último caso el resultado no cambia el modo (que ya es `ACTIVE` por el punto 1), pero deja constancia en el log de que el flujo completo contra Woffu funciona, útil para probar sin esperar al horario real.
+
+Cada cambio de modo (y el motivo concreto, en castellano) se registra por Serial (`AppStateMachine::handleRunning()`), igual que el resultado de cada consulta de jornada (`refreshWorkdayInfo()`). Los intervalos de poll (`kPollActiveSeconds` ~60s, `kPollPassiveSeconds` ~900s) son constantes en `Scheduler.cpp`, ya no configurables desde el portal.
+
+## Zona horaria (TimeSync)
+
+Para no pedirle al usuario que sepa su TZ POSIX (formato poco intuitivo — de hecho con el signo invertido respecto a lo que se suele escribir, `UTC-2` da hora local UTC+2), `TimeSync::begin()` detecta la zona horaria sola por geolocalización de la IP pública del dispositivo:
+
+```
+GET http://ip-api.com/json/?fields=status,message,offset,timezone,city,country
+```
+
+HTTP plano (sin TLS): no hay credenciales ni datos sensibles de por medio, así que no hace falta el certificate bundle que sí usan Woffu/GitHub. La respuesta incluye `offset` (el desfase actual respecto a UTC en segundos, ya con el ajuste de horario de verano aplicado si toca — no hace falta resolver reglas de DST a mano) y `timezone`/`city`/`country` solo para dejar constancia legible en el log. Con ese offset se llama a `configTime(offsetSeconds, 0, "pool.ntp.org", "time.nist.gov")` en vez de `configTzTime()` con una cadena TZ fija.
+
+Sin reintentos ante fallo (mismo criterio que el resto del firmware): si la geolocalización falla, se usa offset 0 (UTC) y se reintenta en la siguiente reconexión WiFi — `TimeSync::begin()` se llama cada vez que `AppStateMachine::loop()` detecta una transición a WiFi conectado, no solo en el arranque.
+
+**Dependencia externa nueva**: al igual que OTA depende de GitHub Releases, la zona horaria pasa a depender de la disponibilidad de `ip-api.com` (gratuito, sin API key, límite de 45 peticiones/minuto por IP — muy por encima de lo que puede generar un único dispositivo llamando una vez por reconexión WiFi). Si el servicio cae, el dispositivo sigue funcionando en UTC hasta que vuelva a estar disponible.
 
 ## Certificate bundle (TLS)
 
@@ -205,7 +264,7 @@ Cualquier otro caso (respuesta inesperada, error HTTP, timeout, JSON inválido) 
 - 3 canales LEDC (PWM), activo-alto (cátodo común, confirmado). La versión del core `arduino-esp32` instalada por PlatformIO usa la API por canal (`ledcSetup`/`ledcAttachPin`/`ledcWrite(channel, duty)`), no la API más nueva por pin (`ledcAttach`) — canales fijos 0/1/2 para R/Y/G.
 - `LedTask` interpreta `{color, mode, brightness}` de la cola: `SOLID` (duty fijo), `BLINK_SLOW` (ciclo ~1000ms), `BLINK_FAST` (~250ms, disponible pero sin uso actualmente), `OFF` (duty 0). `color = ALL` enciende los tres a la vez.
 - En `UNCONFIGURED` y `PORTAL_WINDOW` el patrón depende solo de si hay alguien conectado a la red WiFi propia (`hasClient()`): `ALL` + `BLINK_SLOW` si no hay nadie, `ALL` + `SOLID` mientras haya alguien conectado.
-- Brillo (`brightness` de la config) se aplica como escala del duty cycle cuando el LED está en fase "encendido".
+- Brillo fijo al máximo (255, `LedCommand::brightness` por defecto): ya no es un campo de `DeviceConfig`, así que `AppStateMachine` construye siempre los `LedCommand` sin indicarlo explícitamente.
 
 ## CI/CD — release y publicación del firmware
 

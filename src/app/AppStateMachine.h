@@ -30,6 +30,7 @@ private:
     void handleRunning();
     void saveConfigAndReboot(const DeviceConfig& newConfig);
     void updateLedForCurrentState();
+    void refreshWorkdayInfo(int yday);
 
     AppState state_ = AppState::INIT;
     uint32_t portalWindowDeadlineMs_ = 0;
@@ -37,6 +38,9 @@ private:
     PollMode runningPollMode_ = PollMode::OFF;
     bool runningPollModeKnown_ = false;
     uint32_t nextPollAtMs_ = 0;
+    WorkdayInfo workdayInfo_;
+    bool workdayValid_ = false;
+    int lastWorkdayYday_ = -1;
     bool wifiWasConnected_ = false;
     uint32_t wifiConnectedAtMs_ = 0;
     bool timeWasSynced_ = false;

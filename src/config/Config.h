@@ -5,6 +5,8 @@
 struct TimeWindow {
     uint16_t startMinutes = 0;
     uint16_t endMinutes = 0;
+    TimeWindow() = default;
+    TimeWindow(uint16_t start, uint16_t end) : startMinutes(start), endMinutes(end) {}
 };
 
 struct DeviceConfig {
@@ -13,12 +15,10 @@ struct DeviceConfig {
     String wifiPassword;
     String woffuUsername;
     String woffuPassword;
-    String timezone;
-    TimeWindow windowIn;
-    TimeWindow windowOut;
-    uint16_t pollActiveSeconds = 45;
-    uint16_t pollPassiveSeconds = 900;
-    uint8_t brightness = 180;
+    // Ventana de encendido/apagado configurada por el usuario; dentro de ella el
+    // Scheduler decide activa/pasiva segun la jornada que reporta Woffu (ver Scheduler).
+    // Por defecto 07:30-19:00.
+    TimeWindow activeWindow{450, 1140};
     bool forceActiveWindow = false;
 };
 

@@ -4,6 +4,7 @@
 #include <DNSServer.h>
 #include <WiFi.h>
 #include <esp_mac.h>
+#include "Log.h"
 #include "Version.h"
 
 namespace {
@@ -65,21 +66,11 @@ button{margin-top:1.5em;padding:.7em 1.5em;font-size:1em}
 <label>WiFi Password</label><input name="wifi_pass" type="password" value="%WIFI_PASS%">
 <label>Usuario Woffu</label><input name="woffu_user" value="%WOFFU_USER%" required>
 <label>Password Woffu</label><input name="woffu_pass" type="password" value="%WOFFU_PASS%">
-<label>Zona horaria (TZ POSIX)</label><input name="tz" value="%TZ%">
 <div class="row">
-<div><label>Entrada inicio</label><input name="win_in_start" type="time" value="%WIN_IN_START%"></div>
-<div><label>Entrada fin</label><input name="win_in_end" type="time" value="%WIN_IN_END%"></div>
+<div><label>Encendido</label><input name="win_start" type="time" value="%WIN_START%"></div>
+<div><label>Apagado</label><input name="win_end" type="time" value="%WIN_END%"></div>
 </div>
-<div class="row">
-<div><label>Salida inicio</label><input name="win_out_start" type="time" value="%WIN_OUT_START%"></div>
-<div><label>Salida fin</label><input name="win_out_end" type="time" value="%WIN_OUT_END%"></div>
-</div>
-<div class="row">
-<div><label>Polling activo (s)</label><input name="poll_active_s" type="number" min="5" value="%POLL_ACTIVE%"></div>
-<div><label>Polling pasivo (s)</label><input name="poll_passive_s" type="number" min="30" value="%POLL_PASSIVE%"></div>
-</div>
-<label>Brillo LEDs (0-255)</label><input name="brightness" type="number" min="0" max="255" value="%BRIGHTNESS%">
-<div class="checkbox-row"><input name="force_active" type="checkbox" id="force_active" %FORCE_ACTIVE_CHECKED%><label for="force_active">Forzar ventana activa (pruebas, ignora horario y fin de semana)</label></div>
+<div class="checkbox-row"><input name="force_active" type="checkbox" id="force_active" %FORCE_ACTIVE_CHECKED%><label for="force_active">Forzar ventana activa (pruebas, ignora horario y jornada de Woffu)</label></div>
 <button type="submit">Guardar y reiniciar</button>
 </form>
 <hr>
@@ -114,7 +105,7 @@ void ProvisioningPortal::begin(const DeviceConfig& current) {
     snprintf(apPassword, sizeof(apPassword), "%08u", passValue % 100000000UL);
 
     WiFi.softAP(apSsid, apPassword);
-    Serial.printf("Portal WiFi: %s, password: %s (192.168.4.1)\n", apSsid, apPassword);
+    logPrintf("Portal WiFi: %s, password: %s (192.168.4.1)\n", apSsid, apPassword);
 
     dns_ = new DNSServer();
     dns_->start(kDnsPort, "*", WiFi.softAPIP());
@@ -190,14 +181,8 @@ void ProvisioningPortal::handleRoot() {
     page.replace("%WIFI_PASS%", htmlEscape(current_.wifiPassword));
     page.replace("%WOFFU_USER%", htmlEscape(current_.woffuUsername));
     page.replace("%WOFFU_PASS%", htmlEscape(current_.woffuPassword));
-    page.replace("%TZ%", htmlEscape(current_.timezone));
-    page.replace("%WIN_IN_START%", minutesToHhMm(current_.windowIn.startMinutes));
-    page.replace("%WIN_IN_END%", minutesToHhMm(current_.windowIn.endMinutes));
-    page.replace("%WIN_OUT_START%", minutesToHhMm(current_.windowOut.startMinutes));
-    page.replace("%WIN_OUT_END%", minutesToHhMm(current_.windowOut.endMinutes));
-    page.replace("%POLL_ACTIVE%", String(current_.pollActiveSeconds));
-    page.replace("%POLL_PASSIVE%", String(current_.pollPassiveSeconds));
-    page.replace("%BRIGHTNESS%", String(current_.brightness));
+    page.replace("%WIN_START%", minutesToHhMm(current_.activeWindow.startMinutes));
+    page.replace("%WIN_END%", minutesToHhMm(current_.activeWindow.endMinutes));
     page.replace("%FORCE_ACTIVE_CHECKED%", current_.forceActiveWindow ? "checked" : "");
     server_->send(200, "text/html", page);
 }
@@ -208,22 +193,16 @@ void ProvisioningPortal::handleSave() {
     config.wifiPassword = server_->arg("wifi_pass");
     config.woffuUsername = server_->arg("woffu_user");
     config.woffuPassword = server_->arg("woffu_pass");
-    config.timezone = server_->arg("tz");
 
     bool ok = true;
-    ok &= parseHhMm(server_->arg("win_in_start"), config.windowIn.startMinutes);
-    ok &= parseHhMm(server_->arg("win_in_end"), config.windowIn.endMinutes);
-    ok &= parseHhMm(server_->arg("win_out_start"), config.windowOut.startMinutes);
-    ok &= parseHhMm(server_->arg("win_out_end"), config.windowOut.endMinutes);
+    ok &= parseHhMm(server_->arg("win_start"), config.activeWindow.startMinutes);
+    ok &= parseHhMm(server_->arg("win_end"), config.activeWindow.endMinutes);
 
     if (!ok || config.wifiSsid.isEmpty() || config.woffuUsername.isEmpty()) {
         server_->send(400, "text/html", "<!doctype html><html><body><h1>Error</h1><p>Revisa los campos.</p></body></html>");
         return;
     }
 
-    config.pollActiveSeconds = static_cast<uint16_t>(server_->arg("poll_active_s").toInt());
-    config.pollPassiveSeconds = static_cast<uint16_t>(server_->arg("poll_passive_s").toInt());
-    config.brightness = static_cast<uint8_t>(server_->arg("brightness").toInt());
     config.forceActiveWindow = server_->hasArg("force_active");
 
     pendingConfig_ = config;
