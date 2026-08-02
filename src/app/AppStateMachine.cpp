@@ -9,7 +9,7 @@ namespace {
 constexpr uint8_t kPinLedRed = 25;
 constexpr uint8_t kPinLedYellow = 26;
 constexpr uint8_t kPinLedGreen = 27;
-constexpr uint32_t kPortalWaitMs = 10000; // espera inicial sin nadie conectado; una vez conectado no hay límite hasta que se desconecta
+constexpr uint32_t kPortalWaitMs = 15000; // espera inicial sin nadie conectado; una vez conectado no hay límite hasta que se desconecta
 constexpr uint32_t kNtpSyncTimeoutMs = 15000; // aviso si no ha sincronizado NTP en este tiempo desde que hay WiFi
 
 LedCommand ledSlowBlink(LedColor color) {
