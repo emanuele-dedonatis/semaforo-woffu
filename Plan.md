@@ -30,6 +30,5 @@ Nada del MVP. Próximos pasos:
 ## Futuro (fuera del MVP, ver Requisitos.md)
 
 - Fichaje automático (bluetooth del móvil/portátil, o NFC).
-- Integración con el calendario de Woffu para detectar los días de descanso y vacaciones.
 - Conectividad con servidor externo (controlo remoto, bot telegram).
 - Firmware firmado / flash encryption (hardening opcional, descartado para el MVP).
