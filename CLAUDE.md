@@ -16,6 +16,10 @@ Firmware para un dispositivo ESP32 que muestra el estado de fichaje de [Woffu](h
 
 `README.md` y este `CLAUDE.md` deben mantenerse siempre actualizados: cualquier cambio relevante en stack, estructura del proyecto o alcance debe reflejarse en ambos como parte del mismo trabajo, no como tarea aparte.
 
+## Portal de configuración: limitaciones del navegador cautivo
+
+El popup automático "Iniciar sesión en red" (Captive Network Assistant en iOS, pantalla equivalente en Android) es el flujo de acceso preferido al portal — no se debe diseñar asumiendo que el usuario abrirá un navegador normal. Ese WebView es muy limitado: en iOS normalmente **no ejecuta JavaScript** y el soporte de `<datalist>` es pobre o nulo en varios sistemas. Cualquier funcionalidad del portal (como la sugerencia de redes WiFi) debe funcionar sin depender de JS y usando controles HTML nativos con soporte universal (p. ej. `<select>` en vez de `<datalist>`).
+
 ## Convenciones de commits
 
 Este repo usa **Conventional Commits** de forma estricta, para poder automatizar versionado (semantic-release o similar) a partir del historial. Formato:

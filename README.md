@@ -24,7 +24,7 @@ Los LEDs se manejan como GPIO digitales on/off (sin PWM): el brillo es fijo al m
 ## Funcionamiento
 
 - **Primer arranque** (o tras un "Restablecer de fábrica"): no hay configuración guardada, así que el dispositivo se queda en modo `UNCONFIGURED` con el portal WiFi siempre abierto hasta que se guarda una configuración.
-- **En cada arranque posterior**: entra brevemente en `PORTAL_WINDOW` (10s, o hasta que se desconecte el cliente) antes de pasar a modo normal, para poder reconfigurar o lanzar una comprobación OTA sin necesidad de resetear de fábrica.
+- **En cada arranque posterior**: entra brevemente en `PORTAL_WINDOW` (15s, o hasta que se desconecte el cliente) antes de pasar a modo normal, para poder reconfigurar o lanzar una comprobación OTA sin necesidad de resetear de fábrica.
 - **Modo normal (`RUNNING`)**: el portal se apaga, se conecta a la WiFi configurada, se sincroniza la hora (NTP + zona horaria por geolocalización IP) y arranca el sondeo a Woffu. El `Scheduler` decide el ritmo según la hora y la jornada que reporta Woffu: **off** (LEDs apagados) fuera del horario configurado o en fin de semana/festivo, **pasiva** (cada 15 min) durante la ventana de fichaje de la jornada, y **activa** (cada 60s) el resto del tiempo dentro del horario, para detectar el fichaje/desfichaje con poca latencia.
 - El estado que devuelve Woffu se traduce directamente a color: 🔴 no fichado, 🟢 fichado, 🟡 desconocido (fallo de red o de la API, sin reintentos adicionales — se reintenta en el siguiente ciclo de polling).
 - Las actualizaciones OTA no se comprueban solas: se lanzan a mano desde el portal ("Comprobar actualización OTA"). El pipeline de CI publica una nueva versión en GitHub Releases automáticamente al hacer push a `main`.
@@ -35,7 +35,7 @@ Al arrancar sin datos guardados (o tras un "Restablecer de fábrica"), el dispos
 
 <img src="docs/img/config.png" alt="Portal de configuración desde el móvil" width="300">
 
-- **WiFi SSID / WiFi Password** — red WiFi a la que se conecta el dispositivo en modo normal. El campo SSID sugiere las redes detectadas en un escaneo al abrir el portal, pero admite texto libre (útil para redes ocultas).
+- **WiFi SSID / WiFi Password** — red WiFi a la que se conecta el dispositivo en modo normal. El campo SSID es un desplegable con las redes detectadas en un escaneo al abrir el portal, ordenadas de mayor a menor calidad de señal (se usa `<select>` en vez de un campo de texto con sugerencias porque el navegador cautivo que abren iOS/Android al conectarse al AP no soporta bien esto último).
 - **Usuario Woffu / Password Woffu** — credenciales de la cuenta de Woffu cuyo estado de fichaje se consulta.
 - **Encendido / Apagado** — franja horaria en la que el semáforo está activo y sondea Woffu; fuera de ella los LEDs se apagan (ver `Scheduler` en [Arquitectura.md](Arquitectura.md)).
 - **Forzar ventana activa** — ignora el horario configurado y la jornada de Woffu, sondeando siempre cada 60s; pensado para pruebas.
@@ -62,7 +62,7 @@ Primer arranque: se abre el portal de configuración, se detecta la zona horaria
 
 ```
 [+0s] Semaforo Woffu - firmware 1.1.3-dev.9f12992
-[+0s] Ventana de portal de configuracion abierta (10s, o hasta que se desconecte el cliente).
+[+0s] Ventana de portal de configuracion abierta (15s, o hasta que se desconecte el cliente).
 [+0s] Portal WiFi: Semaforo-A1B2C3, password: 74019283 (192.168.4.1)
 [+0s] WiFi conectado, IP: 192.168.22.24. Detectando zona horaria y sincronizando hora por NTP...
 [+1s] Geolocalizacion IP: GET http://ip-api.com/json/?fields=status,message,offset,timezone,city,country -> 200

@@ -133,7 +133,7 @@ void AppStateMachine::loop() {
     timeWasSynced_ = timeSynced;
 
     if (state_ == AppState::PORTAL_WINDOW && !portalClientConnected_ && millis() >= portalWindowDeadlineMs_) {
-        logPrintln("Ventana de portal cerrada: nadie se conecto en 10s. Pasando a modo normal.");
+        logPrintln("Ventana de portal cerrada: nadie se conecto en 15s. Pasando a modo normal.");
         enterRunning();
     }
 
@@ -152,7 +152,7 @@ void AppStateMachine::enterPortalWindow() {
     // AP (portal) + STA (WiFi real) en paralelo (WIFI_MODE_APSTA): sin la
     // STA no hay salida a internet mientras el portal esta abierto, y el
     // boton de OTA del propio portal la necesita para llegar a GitHub.
-    logPrintln("Ventana de portal de configuracion abierta (10s, o hasta que se desconecte el cliente).");
+    logPrintln("Ventana de portal de configuracion abierta (15s, o hasta que se desconecte el cliente).");
     portal_.begin(config_.get());
     wifi_.begin(config_.get().wifiSsid, config_.get().wifiPassword);
     portalWindowDeadlineMs_ = millis() + kPortalWaitMs;

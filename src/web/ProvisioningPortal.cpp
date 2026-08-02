@@ -43,9 +43,13 @@ String minutesToHhMm(uint16_t minutes) {
     return String(buf);
 }
 
-// Escanea redes WiFi visibles y arma las <option> de un <datalist>, ordenadas
+// Escanea redes WiFi visibles y arma las <option> de un <select>, ordenadas
 // por senal (RSSI) descendente y sin SSIDs duplicados (redes con varios APs).
-String scanSsidOptionsHtml() {
+// Se usa <select> en vez de <datalist> porque el navegador cautivo que abren
+// iOS/Android al conectarse al AP (CNA / popup "Iniciar sesion en red") es un
+// WebView muy limitado: normalmente no ejecuta JavaScript y el soporte de
+// <datalist> es pobre o nulo, pero <select> es un control nativo universal.
+String scanSsidOptionsHtml(const String& currentSsid) {
     constexpr int kMaxNetworks = 32;
     int count = WiFi.scanNetworks();
     if (count <= 0) {
@@ -89,7 +93,9 @@ String scanSsidOptionsHtml() {
             continue;
         }
         seen[seenCount++] = ssid;
-        options += "<option value=\"" + htmlEscape(ssid) + "\">";
+        bool isCurrent = (ssid == currentSsid);
+        String escaped = htmlEscape(ssid);
+        options += "<option value=\"" + escaped + "\"" + (isCurrent ? " selected" : "") + ">" + escaped + "</option>";
     }
     WiFi.scanDelete();
     return options;
@@ -109,13 +115,17 @@ button{margin-top:1.5em;padding:.7em 1.5em;font-size:1em}
 .checkbox-row label{margin-top:0}
 .version{color:#666;font-size:.85em;margin-top:-.5em}
 .notice{background:#eef;padding:.6em 1em;border-radius:4px;margin-top:1em}
+select{width:100%;padding:.5em;box-sizing:border-box;font-size:1em}
 </style></head><body>
 <h1>Configurar Semaforo Woffu</h1>
 <p class="version">Firmware %VERSION%</p>
 %OTA_STATUS%
 <form method="POST" action="/save">
-<label>WiFi SSID</label><input name="ssid" list="ssid_list" value="%SSID%" required autocomplete="off">
-<datalist id="ssid_list">%SSID_OPTIONS%</datalist>
+<label>WiFi SSID</label>
+<select name="ssid_select">
+<option value="">-- Selecciona una red detectada --</option>
+%SSID_OPTIONS%
+</select>
 <label>WiFi Password</label><input name="wifi_pass" type="password" value="%WIFI_PASS%">
 <label>Usuario Woffu</label><input name="woffu_user" value="%WOFFU_USER%" required>
 <label>Password Woffu</label><input name="woffu_pass" type="password" value="%WOFFU_PASS%">
@@ -160,7 +170,7 @@ void ProvisioningPortal::begin(const DeviceConfig& current) {
     WiFi.softAP(apSsid, apPassword);
     logPrintf("Portal WiFi: %s, password: %s (192.168.4.1)\n", apSsid, apPassword);
 
-    ssidOptionsHtml_ = scanSsidOptionsHtml();
+    ssidOptionsHtml_ = scanSsidOptionsHtml(current_.wifiSsid);
 
     dns_ = new DNSServer();
     dns_->start(kDnsPort, "*", WiFi.softAPIP());
@@ -232,7 +242,6 @@ void ProvisioningPortal::handleRoot() {
     page.replace("%OTA_STATUS%", otaStatusMessage_.isEmpty()
         ? ""
         : "<p class=\"notice\">" + htmlEscape(otaStatusMessage_) + "</p>");
-    page.replace("%SSID%", htmlEscape(current_.wifiSsid));
     page.replace("%SSID_OPTIONS%", ssidOptionsHtml_);
     page.replace("%WIFI_PASS%", htmlEscape(current_.wifiPassword));
     page.replace("%WOFFU_USER%", htmlEscape(current_.woffuUsername));
@@ -245,7 +254,7 @@ void ProvisioningPortal::handleRoot() {
 
 void ProvisioningPortal::handleSave() {
     DeviceConfig config = current_;
-    config.wifiSsid = server_->arg("ssid");
+    config.wifiSsid = server_->arg("ssid_select");
     config.wifiPassword = server_->arg("wifi_pass");
     config.woffuUsername = server_->arg("woffu_user");
     config.woffuPassword = server_->arg("woffu_pass");
