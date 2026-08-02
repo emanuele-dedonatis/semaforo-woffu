@@ -8,6 +8,27 @@ Firmware para un dispositivo ESP32 que muestra visualmente el estado de fichaje 
 |---|---|
 | ![Placa ESP32 DevKit con pinout serigrafiado](docs/img/esp32.jpg) | ![Módulo de semáforo LED de 3 colores](docs/img/semaforo.jpg) |
 
+### Conexión
+
+El módulo de semáforo tiene 4 pines (GND, R, Y, G; cátodo común, se encienden en activo-alto) que se conectan directamente a GPIOs del ESP32 — no hace falta resistencia externa, el módulo ya la lleva integrada:
+
+| Módulo semáforo | ESP32 |
+|---|---|
+| GND | GND |
+| R | GPIO25 |
+| Y | GPIO26 |
+| G | GPIO27 |
+
+Los LEDs se manejan por PWM (LEDC) para poder atenuar el brillo por canal, no como simples GPIO on/off.
+
+## Funcionamiento
+
+- **Primer arranque** (o tras un "Restablecer de fábrica"): no hay configuración guardada, así que el dispositivo se queda en modo `UNCONFIGURED` con el portal WiFi siempre abierto hasta que se guarda una configuración.
+- **En cada arranque posterior**: entra brevemente en `PORTAL_WINDOW` (10s, o hasta que se desconecte el cliente) antes de pasar a modo normal, para poder reconfigurar o lanzar una comprobación OTA sin necesidad de resetear de fábrica.
+- **Modo normal (`RUNNING`)**: el portal se apaga, se conecta a la WiFi configurada, se sincroniza la hora (NTP + zona horaria por geolocalización IP) y arranca el sondeo a Woffu. El `Scheduler` decide el ritmo según la hora y la jornada que reporta Woffu: **off** (LEDs apagados) fuera del horario configurado o en fin de semana/festivo, **pasiva** (cada 15 min) durante la ventana de fichaje de la jornada, y **activa** (cada 60s) el resto del tiempo dentro del horario, para detectar el fichaje/desfichaje con poca latencia.
+- El estado que devuelve Woffu se traduce directamente a color: 🔴 no fichado, 🟢 fichado, 🟡 desconocido (fallo de red o de la API, sin reintentos adicionales — se reintenta en el siguiente ciclo de polling).
+- Las actualizaciones OTA no se comprueban solas: se lanzan a mano desde el portal ("Comprobar actualización OTA"). El pipeline de CI publica una nueva versión en GitHub Releases automáticamente al hacer push a `main`.
+
 ## Configuración
 
 Al arrancar sin datos guardados (o tras un "Restablecer de fábrica"), el dispositivo abre un portal cautivo WiFi (red `Semaforo-XXXXXX`) con un formulario de configuración accesible desde el móvil:
