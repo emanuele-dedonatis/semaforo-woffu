@@ -49,6 +49,7 @@ void WoffuClient::begin(const String& username, const String& password) {
     password_ = password;
     accessToken_ = "";
     userId_ = "";
+    credentialsInvalid_ = false;
 }
 
 bool WoffuClient::login() {
@@ -68,6 +69,12 @@ bool WoffuClient::login() {
     String body = "grant_type=password&username=" + urlEncode(username_) + "&password=" + urlEncode(password_);
     int status = http.POST(body);
     logPrintf("Woffu API: POST %s -> %d\n", kAuthUrl, status);
+    if (status == HTTP_CODE_BAD_REQUEST || status == HTTP_CODE_UNAUTHORIZED) {
+        http.end();
+        credentialsInvalid_ = true;
+        logPrintln("Woffu API: usuario o password incorrectos (revisa la configuracion en el portal).");
+        return false;
+    }
     if (status != HTTP_CODE_OK) {
         http.end();
         return false;
@@ -86,6 +93,7 @@ bool WoffuClient::login() {
     }
 
     accessToken_ = doc["accessToken"].as<const char*>();
+    credentialsInvalid_ = false;
     return true;
 }
 

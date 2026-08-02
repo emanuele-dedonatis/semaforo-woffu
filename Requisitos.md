@@ -11,14 +11,15 @@ Compatible con cualquier placa ESP32 que tenga WiFi (el provisioning y el OTA so
 - Consultar el estado de fichaje en Woffu vía su API y reflejarlo en el semáforo:
   - 🔴 Rojo = no fichado
   - 🟢 Verde = fichado
-  - 🟡 Amarillo = estado desconocido (p.ej. no es posible conectarse con Woffu)
+  - 🟡 Amarillo fijo = estado desconocido por un fallo puntual (p.ej. la API de Woffu no responde en un poll concreto)
+  - 🟡 Amarillo parpadeando = fallo persistente que requiere revisar la configuración: no se ha podido conectar a la WiFi configurada, o las credenciales de Woffu son incorrectas
 - Autenticación con Woffu por **usuario/password** (no API key, ya que solo los admins pueden crearlas).
 - Polling adaptativo, para no ser agresivo con la API fuera de las ventanas donde el estado puede cambiar. Para simplificar la configuración, el usuario solo indica una **ventana de encendido/apagado** (por defecto 07:30–19:00, configurable); dentro de ella, el propio dispositivo consulta a Woffu la jornada del día (`GET /api/svc/core/users/{userId}/diarysummaries/workday`) para decidir el ritmo, sin que haga falta configurar nada más:
   - **Ventana pasiva** (el tramo `startTime`–`endTime` que devuelve Woffu para el día, la franja de fichaje habitual): cada 15 min.
   - **Resto de la ventana de encendido** (fuera de ese tramo, p.ej. antes de entrar o después de salir): cada minuto.
   - **Fuera de la ventana de encendido, fin de semana o festivo** (`isWeekend`/`isHoliday` de la respuesta de Woffu): apagado (tanto el LED como las llamadas a la API de fichaje). Si por algún fallo no se puede consultar la jornada del día, se asume ventana activa (más agresiva pero segura) hasta el día siguiente.
   - Todas estas decisiones (por qué se apaga, por qué pasa a pasiva/activa) se registran de forma explicativa por el puerto serie.
-- Sin reintentos ante fallo de conexión (WiFi o API Woffu): un fallo pasa el LED a ámbar y se reintenta en el siguiente ciclo de polling normal (activo/pasivo), sin backoff adicional.
+- Sin reintentos ante fallo de conexión (WiFi o API Woffu): un fallo pasa el LED a ámbar y se reintenta en el siguiente ciclo de polling normal (activo/pasivo), sin backoff adicional. Excepción: si no se consigue conectar a la WiFi configurada, o si Woffu rechaza las credenciales configuradas (usuario/password incorrectos), se registra un error por el puerto serie y el LED pasa a ámbar parpadeando en vez de fijo, para distinguir un problema de configuración persistente de un fallo puntual.
 - Sincronización horaria automática por NTP al arrancar. Zona horaria detectada automáticamente por geolocalización de la IP pública (sin campo que configurar en el portal, ver `## Cliente Woffu`/`TimeSync` en Arquitectura.md).
 
 ## Funcionalidades futuras

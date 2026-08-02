@@ -17,6 +17,7 @@ public:
     void begin(const String& username, const String& password);
     WoffuStatus fetchStatus();
     bool fetchWorkday(WorkdayInfo& out);
+    bool credentialsInvalid() const { return credentialsInvalid_; }
 
 private:
     bool login();
@@ -27,4 +28,5 @@ private:
     String password_;
     String accessToken_;
     String userId_;
+    bool credentialsInvalid_ = false;
 };

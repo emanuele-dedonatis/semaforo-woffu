@@ -11,6 +11,7 @@ constexpr uint8_t kPinLedYellow = 26;
 constexpr uint8_t kPinLedGreen = 27;
 constexpr uint32_t kPortalWaitMs = 15000; // espera inicial sin nadie conectado; una vez conectado no hay límite hasta que se desconecta
 constexpr uint32_t kNtpSyncTimeoutMs = 15000; // aviso si no ha sincronizado NTP en este tiempo desde que hay WiFi
+constexpr uint32_t kWifiConnectTimeoutMs = 20000; // error si no conecta a la WiFi configurada en este tiempo desde RUNNING
 
 LedCommand ledSlowBlink(LedColor color) {
     LedCommand cmd;
@@ -116,6 +117,9 @@ void AppStateMachine::loop() {
         timeSync_.begin();
         wifiConnectedAtMs_ = millis();
         timeSyncTimeoutLogged_ = false;
+    } else if (!wifiConnected && wifiWasConnected_) {
+        wifiDisconnectedSinceMs_ = millis();
+        wifiConnectTimeoutLogged_ = false;
     }
     wifiWasConnected_ = wifiConnected;
 
@@ -170,6 +174,8 @@ void AppStateMachine::enterRunning() {
     }
     scheduler_.configure(config_.get());
     woffuClient_.begin(config_.get().woffuUsername, config_.get().woffuPassword);
+    wifiDisconnectedSinceMs_ = millis();
+    wifiConnectTimeoutLogged_ = false;
     led_.set(ledOff());
 }
 
@@ -241,7 +247,18 @@ void AppStateMachine::handlePortal() {
 }
 
 void AppStateMachine::handleRunning() {
-    if (!wifi_.isConnected() || !timeSync_.isSynced()) {
+    if (!wifi_.isConnected()) {
+        if (!wifiConnectTimeoutLogged_ && millis() - wifiDisconnectedSinceMs_ > kWifiConnectTimeoutMs) {
+            logPrintln("Error: no se ha podido conectar a la WiFi configurada (revisa SSID/password en el portal).");
+            wifiConnectTimeoutLogged_ = true;
+            // Un unico led_.set(): LedController resetea la fase del parpadeo cada vez que
+            // recibe un comando (xQueueOverwrite), asi que reenviarlo en cada vuelta de loop()
+            // (mucho mas rapido que el periodo de parpadeo) lo dejaria fijo en vez de parpadeando.
+            led_.set(ledSlowBlink(LedColor::YELLOW));
+        }
+        return;
+    }
+    if (!timeSync_.isSynced()) {
         return;
     }
 
@@ -283,7 +300,11 @@ void AppStateMachine::handleRunning() {
 
     WoffuStatus status = woffuClient_.fetchStatus();
     logPrintf("Estado Woffu: %s\n", woffuStatusName(status));
-    led_.set(ledForStatus(status));
+    if (woffuClient_.credentialsInvalid()) {
+        led_.set(ledSlowBlink(LedColor::YELLOW));
+    } else {
+        led_.set(ledForStatus(status));
+    }
 }
 
 void AppStateMachine::refreshWorkdayInfo(int yday) {

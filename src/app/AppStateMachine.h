@@ -43,6 +43,8 @@ private:
     int lastWorkdayYday_ = -1;
     bool wifiWasConnected_ = false;
     uint32_t wifiConnectedAtMs_ = 0;
+    uint32_t wifiDisconnectedSinceMs_ = 0;
+    bool wifiConnectTimeoutLogged_ = false;
     bool timeWasSynced_ = false;
     bool timeSyncTimeoutLogged_ = false;
     Config config_;
