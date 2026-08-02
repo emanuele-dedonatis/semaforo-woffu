@@ -244,7 +244,11 @@ void AppStateMachine::enterRunning() {
     woffuClient_.begin(config_.get().woffuUsername, config_.get().woffuPassword);
     wifiDisconnectedSinceMs_ = millis();
     wifiConnectTimeoutLogged_ = false;
-    led_.set(ledOff());
+    // Rotando hasta que handleRunning() tenga un estado real que mostrar
+    // (reconectar wifi, sincronizar NTP y la primera consulta a Woffu pueden
+    // tardar unos segundos): dejarlo en OFF aqui seria indistinguible del OFF
+    // legitimo por estar fuera de horario/fin de semana.
+    led_.set(ledRotate());
 }
 
 void AppStateMachine::handlePortal() {

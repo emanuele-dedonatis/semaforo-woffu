@@ -13,6 +13,7 @@ Compatible con cualquier placa ESP32 que tenga WiFi (el provisioning y el OTA so
   - 🟢 Verde = fichado
   - 🟡 Amarillo fijo = estado desconocido por un fallo puntual (p.ej. la API de Woffu no responde en un poll concreto)
   - 🟡 Amarillo parpadeando = fallo persistente que requiere revisar la configuración: no se ha podido conectar a la WiFi configurada, o las credenciales de Woffu son incorrectas
+  - Justo al cerrarse la ventana de configuración y pasar a modo normal, los LEDs rotan (verde→amarillo→rojo, ver `### Feedback visual`) mientras se reconecta la WiFi, se sincroniza la hora y se hace la primera consulta a Woffu: sin esto, ese hueco se veía igual que "apagado por estar fuera de horario", confundiendo ambos casos.
 - Autenticación con Woffu por **usuario/password** (no API key, ya que solo los admins pueden crearlas).
 - Polling adaptativo, para no ser agresivo con la API fuera de las ventanas donde el estado puede cambiar. Para simplificar la configuración, el usuario solo indica una **ventana de encendido/apagado** (por defecto 07:30–19:00, configurable); dentro de ella, el propio dispositivo consulta a Woffu la jornada del día (`GET /api/svc/core/users/{userId}/diarysummaries/workday`) para decidir el ritmo, sin que haga falta configurar nada más:
   - **Ventana pasiva** (el tramo `startTime`–`endTime` que devuelve Woffu para el día, la franja de fichaje habitual): cada 15 min.
@@ -73,6 +74,8 @@ Una vez abierto el portal, aplica tanto si el dispositivo está configurado (dur
 |---|---|
 | No | 3 LEDs parpadeando lento |
 | Sí | 3 LEDs fijos |
+
+Al cerrarse la ventana de portal (o al terminar el "cargando" inicial si nadie se conecta), y hasta la primera consulta real a Woffu: los LEDs vuelven a rotar (mismo patrón que al arrancar), para no confundirlo con estar apagado por horario.
 
 ## Stack de desarrollo
 

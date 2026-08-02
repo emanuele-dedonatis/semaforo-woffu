@@ -280,7 +280,7 @@ String ProvisioningPortal::renderOtaNotice() {
         case OtaUiState::CHECKING:
             return "<p class=\"notice\">Comprobando actualizaciones...</p>";
         case OtaUiState::UP_TO_DATE:
-            return "<p class=\"notice\">Firmware al dia (v" + htmlEscape(FIRMWARE_VERSION) + ").</p>";
+            return "";  // nada que decir: ya esta en la ultima version
         case OtaUiState::AVAILABLE:
             return "<p class=\"notice\">Version disponible: v" + htmlEscape(otaLatestVersion_) + ".</p>"
                    "<form method=\"POST\" action=\"/ota/update\" onsubmit=\"return confirm('Se "
