@@ -43,6 +43,58 @@ String minutesToHhMm(uint16_t minutes) {
     return String(buf);
 }
 
+// Escanea redes WiFi visibles y arma las <option> de un <datalist>, ordenadas
+// por senal (RSSI) descendente y sin SSIDs duplicados (redes con varios APs).
+String scanSsidOptionsHtml() {
+    constexpr int kMaxNetworks = 32;
+    int count = WiFi.scanNetworks();
+    if (count <= 0) {
+        WiFi.scanDelete();
+        return "";
+    }
+    if (count > kMaxNetworks) {
+        count = kMaxNetworks;
+    }
+
+    int order[kMaxNetworks];
+    for (int i = 0; i < count; i++) {
+        order[i] = i;
+    }
+    for (int i = 0; i < count - 1; i++) {
+        for (int j = i + 1; j < count; j++) {
+            if (WiFi.RSSI(order[j]) > WiFi.RSSI(order[i])) {
+                int tmp = order[i];
+                order[i] = order[j];
+                order[j] = tmp;
+            }
+        }
+    }
+
+    String options;
+    String seen[kMaxNetworks];
+    int seenCount = 0;
+    for (int k = 0; k < count; k++) {
+        String ssid = WiFi.SSID(order[k]);
+        if (ssid.isEmpty()) {
+            continue;
+        }
+        bool duplicate = false;
+        for (int s = 0; s < seenCount; s++) {
+            if (seen[s] == ssid) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (duplicate) {
+            continue;
+        }
+        seen[seenCount++] = ssid;
+        options += "<option value=\"" + htmlEscape(ssid) + "\">";
+    }
+    WiFi.scanDelete();
+    return options;
+}
+
 const char kPageTemplate[] = R"HTML(<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Semaforo Woffu</title>
@@ -62,7 +114,8 @@ button{margin-top:1.5em;padding:.7em 1.5em;font-size:1em}
 <p class="version">Firmware %VERSION%</p>
 %OTA_STATUS%
 <form method="POST" action="/save">
-<label>WiFi SSID</label><input name="ssid" value="%SSID%" required>
+<label>WiFi SSID</label><input name="ssid" list="ssid_list" value="%SSID%" required autocomplete="off">
+<datalist id="ssid_list">%SSID_OPTIONS%</datalist>
 <label>WiFi Password</label><input name="wifi_pass" type="password" value="%WIFI_PASS%">
 <label>Usuario Woffu</label><input name="woffu_user" value="%WOFFU_USER%" required>
 <label>Password Woffu</label><input name="woffu_pass" type="password" value="%WOFFU_PASS%">
@@ -106,6 +159,8 @@ void ProvisioningPortal::begin(const DeviceConfig& current) {
 
     WiFi.softAP(apSsid, apPassword);
     logPrintf("Portal WiFi: %s, password: %s (192.168.4.1)\n", apSsid, apPassword);
+
+    ssidOptionsHtml_ = scanSsidOptionsHtml();
 
     dns_ = new DNSServer();
     dns_->start(kDnsPort, "*", WiFi.softAPIP());
@@ -178,6 +233,7 @@ void ProvisioningPortal::handleRoot() {
         ? ""
         : "<p class=\"notice\">" + htmlEscape(otaStatusMessage_) + "</p>");
     page.replace("%SSID%", htmlEscape(current_.wifiSsid));
+    page.replace("%SSID_OPTIONS%", ssidOptionsHtml_);
     page.replace("%WIFI_PASS%", htmlEscape(current_.wifiPassword));
     page.replace("%WOFFU_USER%", htmlEscape(current_.woffuUsername));
     page.replace("%WOFFU_PASS%", htmlEscape(current_.woffuPassword));

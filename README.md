@@ -35,7 +35,7 @@ Al arrancar sin datos guardados (o tras un "Restablecer de fábrica"), el dispos
 
 <img src="docs/img/config.png" alt="Portal de configuración desde el móvil" width="300">
 
-- **WiFi SSID / WiFi Password** — red WiFi a la que se conecta el dispositivo en modo normal.
+- **WiFi SSID / WiFi Password** — red WiFi a la que se conecta el dispositivo en modo normal. El campo SSID sugiere las redes detectadas en un escaneo al abrir el portal, pero admite texto libre (útil para redes ocultas).
 - **Usuario Woffu / Password Woffu** — credenciales de la cuenta de Woffu cuyo estado de fichaje se consulta.
 - **Encendido / Apagado** — franja horaria en la que el semáforo está activo y sondea Woffu; fuera de ella los LEDs se apagan (ver `Scheduler` en [Arquitectura.md](Arquitectura.md)).
 - **Forzar ventana activa** — ignora el horario configurado y la jornada de Woffu, sondeando siempre cada 60s; pensado para pruebas.

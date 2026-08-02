@@ -34,4 +34,5 @@ private:
     bool pendingOta_ = false;
     bool pendingFactoryReset_ = false;
     String otaStatusMessage_;
+    String ssidOptionsHtml_;
 };
