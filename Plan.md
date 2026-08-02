@@ -8,7 +8,7 @@ Pensado para poder arrancar cada paso en una conversación nueva: basta con leer
 
 - Esqueleto del proyecto PlatformIO (`platformio.ini`, estructura de `src/`).
 - `Config` — persistencia en NVS vía `Preferences`, con defaults.
-- `LedController` — PWM real por canal LEDC, patrones `SOLID`/`BLINK_SLOW`/`BLINK_FAST`/`OFF`, compensación de brillo por canal (el verde necesita más duty que rojo/amarillo por su mayor Vf, con la misma resistencia de serie del módulo).
+- `LedController` — GPIO digital on/off por canal, patrones `SOLID`/`BLINK_SLOW`/`BLINK_FAST`/`OFF`. (Se probó con PWM/LEDC para compensar el verde más apagado, pero al fijarse el brillo siempre al máximo la compensación quedaba sin efecto — ver Arquitectura.md, `## LED Controller`.)
 - `WifiManager` — conexión STA no bloqueante, auto-reconexión.
 - `TimeSync` — NTP vía `configTzTime` con la zona horaria configurada.
 - `ProvisioningPortal` — portal cautivo WiFi (AP + DNS + formulario HTML), sustituyendo el diseño original por BLE (ver "Decisión revisada" en Arquitectura.md).

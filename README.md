@@ -19,7 +19,7 @@ El módulo de semáforo tiene 4 pines (GND, R, Y, G; cátodo común, se enciende
 | Y | GPIO26 |
 | G | GPIO27 |
 
-Los LEDs se manejan por PWM (LEDC) para poder atenuar el brillo por canal, no como simples GPIO on/off.
+Los LEDs se manejan como GPIO digitales on/off (sin PWM): el brillo es fijo al máximo y no es configurable.
 
 ## Funcionamiento
 

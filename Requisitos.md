@@ -29,7 +29,7 @@ Compatible con cualquier placa ESP32 que tenga WiFi (el provisioning y el OTA so
 ## Hardware
 
 - Placa de LEDs de semáforo con 4 pines: GND, R, Y, G (**cátodo común**: R/Y/G se encienden en activo-alto).
-- Brillo por PWM, siempre al máximo (255) — ya no es configurable desde el portal.
+- LEDs controlados por GPIO digital (on/off), siempre al máximo — ya no es configurable desde el portal.
 
 ## OTA
 

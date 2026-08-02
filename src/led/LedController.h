@@ -10,7 +10,6 @@ enum class LedMode : uint8_t { OFF, SOLID, BLINK_SLOW, BLINK_FAST };
 struct LedCommand {
     LedColor color = LedColor::OFF;
     LedMode mode = LedMode::OFF;
-    uint8_t brightness = 255;
 };
 
 class LedController {
@@ -21,10 +20,9 @@ public:
 private:
     static void taskFn(void* params);
 
-    static constexpr uint8_t kChannelRed = 0;
-    static constexpr uint8_t kChannelYellow = 1;
-    static constexpr uint8_t kChannelGreen = 2;
-
     QueueHandle_t commandQueue_ = nullptr;
     TaskHandle_t taskHandle_ = nullptr;
+    uint8_t pinRed_ = 0;
+    uint8_t pinYellow_ = 0;
+    uint8_t pinGreen_ = 0;
 };

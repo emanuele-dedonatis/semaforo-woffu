@@ -41,11 +41,11 @@ Aquí sí que la arquitectura es más simple que con BLE: `WebServer`/`DNSServer
 | Tarea | Quién la crea | Responsabilidad |
 |---|---|---|
 | `loopTask` (la del framework Arduino) | Arduino core | Orquestador: máquina de estados, bombeo de `ProvisioningPortal` (DNS+HTTP), scheduler de polling, llamadas HTTP a Woffu, disparo de OTA |
-| `LedTask` | `xTaskCreate` en `setup()` | Animación de LEDs (PWM/blink) independiente, para que una llamada HTTP lenta no congele el parpadeo |
+| `LedTask` | `xTaskCreate` en `setup()` | Animación de LEDs (blink) independiente, para que una llamada HTTP lenta no congele el parpadeo |
 
 Comunicación:
 
-- `ledCmdQueue` (orquestador → LedTask): `{color, mode: OFF|SOLID|BLINK_SLOW|BLINK_FAST, brightness}` — sigue siendo una cola FreeRTOS porque cruza tareas de verdad.
+- `ledCmdQueue` (orquestador → LedTask): `{color, mode: OFF|SOLID|BLINK_SLOW|BLINK_FAST}` — sigue siendo una cola FreeRTOS porque cruza tareas de verdad.
 - Orquestador ↔ `ProvisioningPortal`: **sin cola** — como los handlers HTTP se ejecutan síncronamente dentro de la misma llamada a `portal_.loop()` (propia tarea `loopTask`), basta con banderas/valores miembro normales (`takeConfigToSave()`, `takeOtaRequested()`, `takeFactoryResetRequested()`), sin necesidad de mecanismos cross-task.
 
 ### Logging (`Log.{h,cpp}`)
@@ -74,7 +74,7 @@ src/
   web/
     ProvisioningPortal.{h,cpp} # AP WiFi + DNS captivo + servidor HTTP con el formulario
   led/
-    LedController.{h,cpp}     # LedTask, LEDC PWM, patrones de parpadeo
+    LedController.{h,cpp}     # LedTask, GPIO digital on/off, patrones de parpadeo
 data/
   cert/x509_crt_bundle.bin  # bundle de CAs de Mozilla, vendorizado (ver sección TLS)
 ```
@@ -97,7 +97,7 @@ Namespace `cfg`:
 | `win_s`/`win_e` | uint16 (minutos del día) | `450,1140` (07:30–19:00) |
 | `force_active` | bool | `false` |
 
-Los ritmos de polling (activo ~60s, pasivo ~900s) ya no son configurables: son constantes fijas en `Scheduler.cpp` (ver `## Cliente Woffu` y `## Scheduler`). El brillo tampoco: `LedCommand::brightness` vale siempre 255 (máximo), ver `## LED Controller`.
+Los ritmos de polling (activo ~60s, pasivo ~900s) ya no son configurables: son constantes fijas en `Scheduler.cpp` (ver `## Cliente Woffu` y `## Scheduler`). El brillo tampoco: los LEDs son GPIO digital on/off, siempre al máximo, ver `## LED Controller`.
 
 **Sin cifrado de NVS para el MVP**: cifrar de verdad el contenido de NVS en el ESP32 requiere activar *flash encryption* a nivel de eFuse (paso de fábrica/primer flasheo, irreversible en modo *release*, y que complica el flujo de OTA con firmas/cifrado de imágenes). Queda descartado para el MVP; la config permanece protegida solo por la password del AP de configuración. Se anota como posible mejora futura opcional para quien quiera más hardening.
 
@@ -261,10 +261,10 @@ Sin reintentos ante fallo (mismo criterio que el resto del firmware): si la geol
 ## LED Controller
 
 - GPIOs por defecto: R=25, Y=26, G=27 (libres en un ESP32 DevKit genérico, no son strapping pins). Ajustables en `AppStateMachine.cpp` si el cableado real difiere.
-- 3 canales LEDC (PWM), activo-alto (cátodo común, confirmado). La versión del core `arduino-esp32` instalada por PlatformIO usa la API por canal (`ledcSetup`/`ledcAttachPin`/`ledcWrite(channel, duty)`), no la API más nueva por pin (`ledcAttach`) — canales fijos 0/1/2 para R/Y/G.
-- `LedTask` interpreta `{color, mode, brightness}` de la cola: `SOLID` (duty fijo), `BLINK_SLOW` (ciclo ~1000ms), `BLINK_FAST` (~250ms, disponible pero sin uso actualmente), `OFF` (duty 0). `color = ALL` enciende los tres a la vez.
+- GPIO digital on/off (`pinMode`/`digitalWrite`), activo-alto (cátodo común, confirmado). Sin PWM: al quitarse el brillo configurable (siempre al máximo), un duty LEDC fijo a fondo de escala era equivalente a un simple HIGH/LOW, así que se simplificó a GPIO puro.
+- `LedTask` interpreta `{color, mode}` de la cola: `SOLID` (encendido fijo), `BLINK_SLOW` (ciclo ~1000ms), `BLINK_FAST` (~250ms, disponible pero sin uso actualmente), `OFF` (apagado). `color = ALL` enciende los tres a la vez.
 - En `UNCONFIGURED` y `PORTAL_WINDOW` el patrón depende solo de si hay alguien conectado a la red WiFi propia (`hasClient()`): `ALL` + `BLINK_SLOW` si no hay nadie, `ALL` + `SOLID` mientras haya alguien conectado.
-- Brillo fijo al máximo (255, `LedCommand::brightness` por defecto): ya no es un campo de `DeviceConfig`, así que `AppStateMachine` construye siempre los `LedCommand` sin indicarlo explícitamente.
+- No hay brillo configurable ni compensación de intensidad por canal: los tres LEDs se controlan igual, a todo o nada.
 
 ## CI/CD — release y publicación del firmware
 
