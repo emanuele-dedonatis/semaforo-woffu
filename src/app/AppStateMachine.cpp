@@ -79,6 +79,25 @@ void AppStateMachine::begin() {
     otaUpdater_.setBeforeFlashCallback([this](const String& from, const String& to) {
         config_.markOtaPending(from, to);
     });
+    // El portal esta bloqueado (no llama a WebServer::handleClient()) mientras
+    // dura la descarga: este callback "bombea" el portal desde dentro de la
+    // propia llamada bloqueante para que la pagina siga respondiendo peticiones
+    // (el meta-refresh de ProvisioningPortal) y muestre progreso real.
+    otaUpdater_.setProgressCallback([this](size_t current, size_t total) {
+        portal_.reportOtaProgress(current, total);
+        // Solo se loguea cada 10% (y el ultimo tramo): a cada sector de 4KB
+        // escrito en flash saldrian decenas de lineas por segundo.
+        int percent = total > 0 ? static_cast<int>((current * 100) / total) : 0;
+        if (percent != lastLoggedOtaPercent_ && (percent % 10 == 0 || percent >= 100)) {
+            lastLoggedOtaPercent_ = percent;
+            if (percent >= 100) {
+                logPrintln("OTA: descarga completa, finalizando instalacion...");
+            } else {
+                logPrintf("OTA: descargando firmware... %d%%\n", percent);
+            }
+        }
+        portal_.loop();
+    });
 
     String otaFrom, otaTo;
     if (config_.takeOtaNote(otaFrom, otaTo)) {
@@ -154,8 +173,9 @@ void AppStateMachine::enterUnconfigured() {
 
 void AppStateMachine::enterPortalWindow() {
     // AP (portal) + STA (WiFi real) en paralelo (WIFI_MODE_APSTA): sin la
-    // STA no hay salida a internet mientras el portal esta abierto, y el
-    // boton de OTA del propio portal la necesita para llegar a GitHub.
+    // STA no hay salida a internet mientras el portal esta abierto, y la
+    // comprobacion/actualizacion OTA del propio portal la necesita para
+    // llegar a GitHub.
     logPrintln("Ventana de portal de configuracion abierta (15s, o hasta que se desconecte el cliente).");
     portal_.begin(config_.get());
     wifi_.begin(config_.get().wifiSsid, config_.get().wifiPassword);
@@ -180,6 +200,16 @@ void AppStateMachine::enterRunning() {
 }
 
 void AppStateMachine::handlePortal() {
+    // Comprobacion OTA automatica, una sola vez por arranque: hace falta wifi
+    // Y hora sincronizada (sin NTP el reloj esta a 1970 y la validacion del
+    // certificado TLS de GitHub falla como "no valido todavia" - mismo motivo
+    // por el que handleRunning() espera a timeSync_.isSynced() antes de llamar
+    // a Woffu). No depende de que nadie haya abierto la pagina del portal.
+    if (!otaCheckTriggered_ && wifi_.isConnected() && timeSync_.isSynced()) {
+        otaCheckTriggered_ = true;
+        performOtaCheck();
+    }
+
     portal_.loop();
 
     bool connected = portal_.hasClient();
@@ -206,35 +236,51 @@ void AppStateMachine::handlePortal() {
         return;
     }
 
-    if (portal_.takeOtaRequested()) {
-        logPrintln("Actualizacion OTA solicitada desde el portal. Comprobando...");
+    if (portal_.takeOtaUpdateRequested()) {
+        logPrintln("Actualizacion OTA solicitada desde el portal. Descargando e instalando...");
         if (!wifi_.isConnected()) {
             logPrintln("OTA: todavia sin conexion a la WiFi configurada.");
-            portal_.reportOtaStatus(
-                "OTA: el dispositivo todavia no tiene conexion a la WiFi configurada "
-                "(necesaria para llegar a GitHub). Espera unos segundos y vuelve a intentarlo.");
-            return;
-        }
-        switch (otaUpdater_.checkAndUpdate()) {
-            case OtaResult::UP_TO_DATE:
-                logPrintln("OTA: ya esta en la ultima version.");
-                portal_.reportOtaStatus("OTA: ya tienes la ultima version instalada.");
-                break;
-            case OtaResult::UPDATED:
-                // httpUpdate.rebootOnUpdate(true) reinicia dentro de checkAndUpdate() en
-                // caso de exito: si llegamos aqui es que, excepcionalmente, no reinicio.
-                logPrintln("OTA: actualizado correctamente, reiniciando...");
-                portal_.reportOtaStatus("OTA: actualizado correctamente, reiniciando...");
-                break;
-            case OtaResult::ERROR:
-                // Si el fallo fue en el flasheo (tras el callback de OtaUpdater), no hubo
-                // reboot: limpiar la nota para que no reaparezca en un reinicio posterior
-                // sin relacion (p.ej. un guardado normal de config dias despues).
-                config_.clearOtaNote();
-                logPrintf("OTA: error comprobando o descargando la actualizacion (%s).\n",
-                          otaUpdater_.lastErrorDetail().c_str());
-                portal_.reportOtaStatus("OTA: error - " + otaUpdater_.lastErrorDetail());
-                break;
+            portal_.reportOtaError(
+                "el dispositivo todavia no tiene conexion a la WiFi configurada (necesaria "
+                "para llegar a GitHub). Espera unos segundos y vuelve a intentarlo.");
+        } else {
+            lastLoggedOtaPercent_ = -1;
+            // handleOtaUpdate() ya respondio el 302 al POST y puso el estado en
+            // UPDATING antes de que llegaramos aqui, pero el navegador todavia
+            // no ha tenido tiempo de hacer el GET / que sigue a ese redirect.
+            // otaUpdater_.update() no vuelve a ceder el turno hasta el primer
+            // callback de progreso (que puede tardar varios segundos: conexion
+            // TLS + posibles redirecciones de GitHub antes de empezar a
+            // descargar), asi que sin este bombeo previo el navegador se
+            // quedaria varios segundos sin respuesta justo tras pulsar
+            // "Actualizar" - tiempo de sobra para que alguien impaciente le
+            // de otra vez al boton o refresque a mano.
+            uint32_t pumpUntilMs = millis() + 800;
+            while (millis() < pumpUntilMs) {
+                portal_.loop();
+                delay(10);
+            }
+            switch (otaUpdater_.update(portal_.otaTargetVersion())) {
+                case OtaResult::UP_TO_DATE:
+                    logPrintln("OTA: ya esta en la ultima version.");
+                    portal_.reportOtaUpToDate();
+                    break;
+                case OtaResult::UPDATED:
+                    // httpUpdate.rebootOnUpdate(true) reinicia dentro de update() en caso de
+                    // exito: si llegamos aqui es que, excepcionalmente, no reinicio.
+                    logPrintln("OTA: actualizado correctamente, reiniciando...");
+                    portal_.reportOtaProgress(1, 1);
+                    break;
+                case OtaResult::ERROR:
+                    // Si el fallo fue en el flasheo (tras el callback de OtaUpdater), no hubo
+                    // reboot: limpiar la nota para que no reaparezca en un reinicio posterior
+                    // sin relacion (p.ej. un guardado normal de config dias despues).
+                    config_.clearOtaNote();
+                    logPrintf("OTA: error descargando/instalando la actualizacion (%s).\n",
+                              otaUpdater_.lastErrorDetail().c_str());
+                    portal_.reportOtaError(otaUpdater_.lastErrorDetail());
+                    break;
+            }
         }
     }
 
@@ -243,6 +289,26 @@ void AppStateMachine::handlePortal() {
         config_.factoryReset();
         delay(300);
         ESP.restart();
+    }
+}
+
+void AppStateMachine::performOtaCheck() {
+    logPrintln("Comprobacion automatica de actualizacion OTA (wifi y hora listas). Comprobando...");
+    portal_.reportOtaChecking();
+    String latest;
+    switch (otaUpdater_.checkForUpdate(latest)) {
+        case OtaCheckResult::UP_TO_DATE:
+            logPrintln("OTA: ya esta en la ultima version.");
+            portal_.reportOtaUpToDate();
+            break;
+        case OtaCheckResult::AVAILABLE:
+            logPrintf("OTA: version nueva disponible (%s -> %s).\n", FIRMWARE_VERSION, latest.c_str());
+            portal_.reportOtaAvailable(latest);
+            break;
+        case OtaCheckResult::ERROR:
+            logPrintf("OTA: error comprobando actualizacion (%s).\n", otaUpdater_.lastErrorDetail().c_str());
+            portal_.reportOtaError(otaUpdater_.lastErrorDetail());
+            break;
     }
 }
 

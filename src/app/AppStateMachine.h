@@ -28,6 +28,7 @@ private:
     void enterRunning();
     void handlePortal();
     void handleRunning();
+    void performOtaCheck();
     void saveConfigAndReboot(const DeviceConfig& newConfig);
     void updateLedForCurrentState();
     void refreshWorkdayInfo(int yday);
@@ -47,6 +48,8 @@ private:
     bool wifiConnectTimeoutLogged_ = false;
     bool timeWasSynced_ = false;
     bool timeSyncTimeoutLogged_ = false;
+    bool otaCheckTriggered_ = false;
+    int lastLoggedOtaPercent_ = -1;
     Config config_;
     Scheduler scheduler_;
     ProvisioningPortal portal_;

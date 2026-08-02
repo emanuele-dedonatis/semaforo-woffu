@@ -25,16 +25,14 @@ String tlsErrorDetail(WiFiClientSecure& client) {
 }
 }  // namespace
 
-OtaResult OtaUpdater::checkAndUpdate() {
-    lastErrorDetail_ = "";
-
+bool OtaUpdater::fetchLatestVersion(String& out) {
     WiFiClientSecure versionClient;
     applyCertBundle(versionClient);
 
     HTTPClient http;
     if (!http.begin(versionClient, kVersionUrl)) {
         lastErrorDetail_ = "No se pudo iniciar la conexion para comprobar version.txt.";
-        return OtaResult::ERROR;
+        return false;
     }
     // GitHub redirige releases/latest/download/* (varios saltos, hasta el CDN
     // final); sin esto HTTPClient no sigue el 302 y GET() devuelve ese codigo
@@ -46,13 +44,27 @@ OtaResult OtaUpdater::checkAndUpdate() {
             ? "Comprobando version.txt: HTTP " + String(status)
             : "Comprobando version.txt: " + HTTPClient::errorToString(status) + tlsErrorDetail(versionClient);
         http.end();
-        return OtaResult::ERROR;
+        return false;
     }
-    String latestVersion = http.getString();
-    latestVersion.trim();
+    out = http.getString();
+    out.trim();
     http.end();
+    return true;
+}
 
-    if (latestVersion == FIRMWARE_VERSION) {
+OtaCheckResult OtaUpdater::checkForUpdate(String& latestVersionOut) {
+    lastErrorDetail_ = "";
+
+    if (!fetchLatestVersion(latestVersionOut)) {
+        return OtaCheckResult::ERROR;
+    }
+    return latestVersionOut == FIRMWARE_VERSION ? OtaCheckResult::UP_TO_DATE : OtaCheckResult::AVAILABLE;
+}
+
+OtaResult OtaUpdater::update(const String& targetVersion) {
+    lastErrorDetail_ = "";
+
+    if (targetVersion == FIRMWARE_VERSION) {
         return OtaResult::UP_TO_DATE;
     }
 
@@ -61,14 +73,19 @@ OtaResult OtaUpdater::checkAndUpdate() {
     // ultimo punto donde nos da tiempo a dejar constancia (Serial y, via el
     // callback, algo que sobreviva al reboot para el portal).
     logPrintf("OTA: version nueva disponible (%s -> %s). Descargando e instalando...\n", FIRMWARE_VERSION,
-              latestVersion.c_str());
+              targetVersion.c_str());
     if (beforeFlash_) {
-        beforeFlash_(FIRMWARE_VERSION, latestVersion);
+        beforeFlash_(FIRMWARE_VERSION, targetVersion);
     }
 
     WiFiClientSecure updateClient;
     applyCertBundle(updateClient);
 
+    if (progress_) {
+        httpUpdate.onProgress([this](int current, int total) {
+            progress_(static_cast<size_t>(current), static_cast<size_t>(total));
+        });
+    }
     httpUpdate.rebootOnUpdate(true);
     httpUpdate.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     switch (httpUpdate.update(updateClient, kFirmwareUrl)) {

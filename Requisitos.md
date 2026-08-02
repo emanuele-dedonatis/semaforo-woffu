@@ -36,7 +36,7 @@ Compatible con cualquier placa ESP32 que tenga WiFi (el provisioning y el OTA so
 
 - El dispositivo debe soportar updates de firmware OTA, para poder iterar funcionalidad sin acceso físico.
 - **Vía WiFi, descargando desde GitHub Releases** (repo público, sin necesidad de autenticación).
-- Comprobación/instalación **bajo demanda**, disparada con un botón en el portal web de configuración (solo disponible durante la ventana de provisioning activa).
+- **Comprobación automática**, sin necesidad de que el usuario haga nada, en cuanto el dispositivo tiene WiFi y hora sincronizada mientras el portal está activo (no depende de que se abra la página). La página muestra si el firmware está al día o si hay una versión nueva; **instalación bajo demanda**, con un botón que solo aparece cuando hay una actualización disponible (solo durante la ventana de provisioning activa). Si la comprobación falla, no hay reintento automático ni botón: hay que reiniciar el dispositivo.
 - Firmware firmado/verificado: a valorar como mejora posterior (no bloqueante para el MVP).
 
 ## Provisioning (portal WiFi)
@@ -56,7 +56,7 @@ La página también muestra la versión de firmware actual (útil para comprobar
 
 - Si el dispositivo **no está configurado**: red WiFi propia (AP) siempre activa, sin límite de tiempo.
 - Si el dispositivo **ya está configurado**: AP activo los primeros 15s tras el arranque, en espera de que alguien se conecte a esa red (fijo, no configurable). Mientras no se conecte nadie, pasados esos 15s se desactiva y el dispositivo pasa a funcionamiento normal. Si alguien se conecta, la ventana se mantiene abierta sin límite de tiempo mientras siga conectado, y se cierra en cuanto se desconecta (no hace falta esperar a que expire ningún plazo).
-- Si el dispositivo ya está configurado, mientras el portal está activo (`PORTAL_WINDOW`) el ESP32 mantiene el AP del portal **y** se conecta a la WiFi real en paralelo (`WIFI_MODE_APSTA`) — necesario para que el botón de OTA del propio portal tenga salida a internet. Si el dispositivo no está configurado (`UNCONFIGURED`) no hay credenciales guardadas, así que solo hay AP.
+- Si el dispositivo ya está configurado, mientras el portal está activo (`PORTAL_WINDOW`) el ESP32 mantiene el AP del portal **y** se conecta a la WiFi real en paralelo (`WIFI_MODE_APSTA`) — necesario para que la comprobación/actualización OTA del propio portal tenga salida a internet. Si el dispositivo no está configurado (`UNCONFIGURED`) no hay credenciales guardadas, así que solo hay AP.
 - Para volver a entrar en modo configuración: apagar y reencender el dispositivo.
 
 ### Seguridad del portal
