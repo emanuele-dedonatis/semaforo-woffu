@@ -4,6 +4,9 @@ namespace {
 constexpr TickType_t kSlowPeriod = pdMS_TO_TICKS(1000);
 constexpr TickType_t kFastPeriod = pdMS_TO_TICKS(250);
 constexpr TickType_t kPollPeriod = pdMS_TO_TICKS(50);
+constexpr TickType_t kRotatePeriod = pdMS_TO_TICKS(1000);
+constexpr LedColor kRotateSequence[] = {LedColor::GREEN, LedColor::YELLOW, LedColor::RED};
+constexpr size_t kRotateSteps = sizeof(kRotateSequence) / sizeof(kRotateSequence[0]);
 }
 
 void LedController::begin(uint8_t pinRed, uint8_t pinYellow, uint8_t pinGreen) {
@@ -30,11 +33,15 @@ void LedController::taskFn(void* params) {
     LedCommand current;
     bool phaseOn = true;
     TickType_t lastToggle = xTaskGetTickCount();
+    size_t rotateIndex = 0;
+    TickType_t lastRotate = xTaskGetTickCount();
 
     for (;;) {
         if (xQueueReceive(self->commandQueue_, &current, kPollPeriod) == pdTRUE) {
             phaseOn = true;
             lastToggle = xTaskGetTickCount();
+            rotateIndex = 0;
+            lastRotate = xTaskGetTickCount();
         }
 
         TickType_t blinkPeriod = 0;
@@ -49,11 +56,22 @@ void LedController::taskFn(void* params) {
             lastToggle = xTaskGetTickCount();
         }
 
-        bool lit = (current.mode == LedMode::SOLID) || (blinkPeriod > 0 && phaseOn);
+        LedColor activeColor = current.color;
+        bool lit;
+        if (current.mode == LedMode::ROTATE) {
+            if ((xTaskGetTickCount() - lastRotate) >= kRotatePeriod) {
+                rotateIndex = (rotateIndex + 1) % kRotateSteps;
+                lastRotate = xTaskGetTickCount();
+            }
+            activeColor = kRotateSequence[rotateIndex];
+            lit = true;
+        } else {
+            lit = (current.mode == LedMode::SOLID) || (blinkPeriod > 0 && phaseOn);
+        }
 
-        bool redOn = lit && (current.color == LedColor::RED || current.color == LedColor::ALL);
-        bool yellowOn = lit && (current.color == LedColor::YELLOW || current.color == LedColor::ALL);
-        bool greenOn = lit && (current.color == LedColor::GREEN || current.color == LedColor::ALL);
+        bool redOn = lit && (activeColor == LedColor::RED || activeColor == LedColor::ALL);
+        bool yellowOn = lit && (activeColor == LedColor::YELLOW || activeColor == LedColor::ALL);
+        bool greenOn = lit && (activeColor == LedColor::GREEN || activeColor == LedColor::ALL);
 
         digitalWrite(self->pinRed_, redOn ? HIGH : LOW);
         digitalWrite(self->pinYellow_, yellowOn ? HIGH : LOW);

@@ -12,6 +12,7 @@ constexpr uint8_t kPinLedGreen = 27;
 constexpr uint32_t kPortalWaitMs = 15000; // espera inicial sin nadie conectado; una vez conectado no hay límite hasta que se desconecta
 constexpr uint32_t kNtpSyncTimeoutMs = 15000; // aviso si no ha sincronizado NTP en este tiempo desde que hay WiFi
 constexpr uint32_t kWifiConnectTimeoutMs = 20000; // error si no conecta a la WiFi configurada en este tiempo desde RUNNING
+constexpr uint32_t kConnectingTimeoutMs = 20000; // tiempo maximo en CONNECTING antes de abrir el portal igualmente
 
 LedCommand ledSlowBlink(LedColor color) {
     LedCommand cmd;
@@ -36,6 +37,13 @@ LedCommand ledSolid(LedColor color) {
 
 LedCommand ledAllSolid() {
     return ledSolid(LedColor::ALL);
+}
+
+LedCommand ledRotate() {
+    LedCommand cmd;
+    cmd.color = LedColor::ALL;  // ignorado en modo ROTATE, ver LedController
+    cmd.mode = LedMode::ROTATE;
+    return cmd;
 }
 
 LedCommand ledForStatus(WoffuStatus status) {
@@ -75,6 +83,13 @@ const char* woffuStatusName(WoffuStatus status) {
 void AppStateMachine::begin() {
     config_.begin();
     led_.begin(kPinLedRed, kPinLedYellow, kPinLedGreen);
+    // Rotando desde el primer instante, tambien en UNCONFIGURED: portal_.begin()
+    // (mas abajo, via enterUnconfigured()/enterConnecting()) incluye un escaneo
+    // de redes WiFi que ya tarda unos segundos por si solo, y sin esto los LEDs
+    // se quedarian apagados durante ese hueco en vez de mostrar que el
+    // dispositivo esta "cargando". updateLedForCurrentState() lo sustituye por
+    // el patron definitivo en cuanto el portal esta realmente listo.
+    led_.set(ledRotate());
 
     otaUpdater_.setBeforeFlashCallback([this](const String& from, const String& to) {
         config_.markOtaPending(from, to);
@@ -110,14 +125,14 @@ void AppStateMachine::begin() {
         }
     }
 
-    state_ = config_.get().configured ? AppState::PORTAL_WINDOW : AppState::UNCONFIGURED;
+    state_ = config_.get().configured ? AppState::CONNECTING : AppState::UNCONFIGURED;
 
     switch (state_) {
         case AppState::UNCONFIGURED:
             enterUnconfigured();
             break;
-        case AppState::PORTAL_WINDOW:
-            enterPortalWindow();
+        case AppState::CONNECTING:
+            enterConnecting();
             break;
         default:
             break;
@@ -125,7 +140,7 @@ void AppStateMachine::begin() {
 }
 
 void AppStateMachine::loop() {
-    if (state_ != AppState::RUNNING) {
+    if (state_ == AppState::UNCONFIGURED || state_ == AppState::PORTAL_WINDOW) {
         handlePortal();
     }
 
@@ -155,6 +170,10 @@ void AppStateMachine::loop() {
     }
     timeWasSynced_ = timeSynced;
 
+    if (state_ == AppState::CONNECTING) {
+        handleConnecting();
+    }
+
     if (state_ == AppState::PORTAL_WINDOW && !portalClientConnected_ && millis() >= portalWindowDeadlineMs_) {
         logPrintln("Ventana de portal cerrada: nadie se conecto en 15s. Pasando a modo normal.");
         enterRunning();
@@ -171,14 +190,43 @@ void AppStateMachine::enterUnconfigured() {
     updateLedForCurrentState();
 }
 
+void AppStateMachine::enterConnecting() {
+    // Antes de abrir el portal, se intenta conectar a la WiFi guardada,
+    // sincronizar la hora y comprobar actualizaciones OTA (ver
+    // handleConnecting()): si todo va bien, el portal se abre ya con el
+    // resultado listo, sin depender de que la pagina se auto-refresque
+    // mientras el usuario puede estar rellenando el formulario (ver
+    // ProvisioningPortal). Si no hay wifi o tarda demasiado (credenciales
+    // cambiadas, red no disponible...), se abre el portal igualmente pasado
+    // kConnectingTimeoutMs para no dejar el dispositivo sin forma de
+    // reconfigurarse.
+    logPrintln("Conectando a la WiFi configurada y sincronizando hora antes de abrir el portal...");
+    wifi_.begin(config_.get().wifiSsid, config_.get().wifiPassword);
+    connectingDeadlineMs_ = millis() + kConnectingTimeoutMs;
+    led_.set(ledRotate());
+}
+
+void AppStateMachine::handleConnecting() {
+    if (wifi_.isConnected() && timeSync_.isSynced()) {
+        otaCheckTriggered_ = true;
+        performOtaCheck();
+        enterPortalWindow();
+        return;
+    }
+    if (millis() >= connectingDeadlineMs_) {
+        logPrintln("Conectando: tiempo de espera agotado (WiFi o NTP); se abre el portal igualmente.");
+        enterPortalWindow();
+    }
+}
+
 void AppStateMachine::enterPortalWindow() {
-    // AP (portal) + STA (WiFi real) en paralelo (WIFI_MODE_APSTA): sin la
-    // STA no hay salida a internet mientras el portal esta abierto, y la
-    // comprobacion/actualizacion OTA del propio portal la necesita para
-    // llegar a GitHub.
+    // AP (portal) + STA (WiFi real) en paralelo (WIFI_MODE_APSTA, ya arrancada
+    // en enterConnecting()): sin la STA no hay salida a internet mientras el
+    // portal esta abierto, y la comprobacion/actualizacion OTA del propio
+    // portal la necesita para llegar a GitHub.
+    state_ = AppState::PORTAL_WINDOW;
     logPrintln("Ventana de portal de configuracion abierta (15s, o hasta que se desconecte el cliente).");
     portal_.begin(config_.get());
-    wifi_.begin(config_.get().wifiSsid, config_.get().wifiPassword);
     portalWindowDeadlineMs_ = millis() + kPortalWaitMs;
     updateLedForCurrentState();
 }

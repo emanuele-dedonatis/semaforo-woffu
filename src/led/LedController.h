@@ -5,7 +5,10 @@
 #include <freertos/queue.h>
 
 enum class LedColor : uint8_t { OFF, RED, YELLOW, GREEN, ALL };
-enum class LedMode : uint8_t { OFF, SOLID, BLINK_SLOW, BLINK_FAST };
+// ROTATE ignora el campo color de LedCommand: va turnandose solo entre verde,
+// amarillo y rojo (ver LedController.cpp), pensado como "cargando" mientras
+// se conecta a la WiFi/NTP antes de abrir el portal (ver AppStateMachine).
+enum class LedMode : uint8_t { OFF, SOLID, BLINK_SLOW, BLINK_FAST, ROTATE };
 
 struct LedCommand {
     LedColor color = LedColor::OFF;

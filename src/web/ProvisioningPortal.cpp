@@ -101,18 +101,20 @@ String scanSsidOptionsHtml(const String& currentSsid) {
     return options;
 }
 
-// Estados en los que conviene recargar sola la pagina (sin JavaScript, para
-// que funcione tambien en el navegador cautivo restringido que abren
-// iOS/Android al conectarse al AP, ver scanSsidOptionsHtml() mas arriba).
+// Solo se recarga sola la pagina durante UPDATING (sin JavaScript, para que
+// funcione tambien en el navegador cautivo restringido que abren iOS/Android
+// al conectarse al AP, ver scanSsidOptionsHtml() mas arriba): es el unico
+// estado en el que el usuario no deberia estar a la vez escribiendo en el
+// formulario de configuracion de la misma pagina, asi que el auto-refresco no
+// arriesga borrarle lo que este rellenando. El resto de estados (incluido
+// IDLE, que en un dispositivo sin WiFi guardada nunca llega a cambiar solo)
+// se muestran sin recargar - ver AppStateMachine::handleConnecting(), que ya
+// intenta resolver la comprobacion OTA antes de abrir el portal.
 String otaRefreshMetaFor(OtaUiState state) {
-    switch (state) {
-        case OtaUiState::IDLE:      // sin wifi todavia: reintenta hasta que conecte
-        case OtaUiState::CHECKING:
-        case OtaUiState::UPDATING:
-            return "<meta http-equiv=\"refresh\" content=\"3;url=/\">";
-        default:
-            return "";
+    if (state == OtaUiState::UPDATING) {
+        return "<meta http-equiv=\"refresh\" content=\"3;url=/\">";
     }
+    return "";
 }
 
 const char kPageTemplate[] = R"HTML(<!doctype html><html><head><meta charset="utf-8">
@@ -273,8 +275,8 @@ void ProvisioningPortal::reportOtaError(const String& message) {
 String ProvisioningPortal::renderOtaNotice() {
     switch (otaUiState_) {
         case OtaUiState::IDLE:
-            return "<p class=\"notice\">Conectando y sincronizando hora todavia: en cuanto "
-                   "termine se comprobaran las actualizaciones.</p>";
+            return "<p class=\"notice\">Sin conexion a internet: en cuanto la haya se "
+                   "comprobaran las actualizaciones.</p>";
         case OtaUiState::CHECKING:
             return "<p class=\"notice\">Comprobando actualizaciones...</p>";
         case OtaUiState::UP_TO_DATE:

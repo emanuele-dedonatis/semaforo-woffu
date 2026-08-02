@@ -13,6 +13,7 @@
 enum class AppState : uint8_t {
     INIT,
     UNCONFIGURED,
+    CONNECTING,
     PORTAL_WINDOW,
     RUNNING,
 };
@@ -24,8 +25,10 @@ public:
 
 private:
     void enterUnconfigured();
+    void enterConnecting();
     void enterPortalWindow();
     void enterRunning();
+    void handleConnecting();
     void handlePortal();
     void handleRunning();
     void performOtaCheck();
@@ -34,6 +37,7 @@ private:
     void refreshWorkdayInfo(int yday);
 
     AppState state_ = AppState::INIT;
+    uint32_t connectingDeadlineMs_ = 0;
     uint32_t portalWindowDeadlineMs_ = 0;
     bool portalClientConnected_ = false;
     PollMode runningPollMode_ = PollMode::OFF;
