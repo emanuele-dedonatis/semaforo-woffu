@@ -39,12 +39,17 @@ bool WoffuClient::login() {
 
     HTTPClient http;
     if (!http.begin(client, kAuthUrl)) {
+        Serial.printf("Woffu API: no se pudo iniciar la conexion a %s\n", kAuthUrl);
         return false;
     }
+    // Fuerza HTTP/1.0: evita que el servidor responda con Transfer-Encoding
+    // chunked, que getStream() no decodifica y rompe deserializeJson.
+    http.useHTTP10(true);
     http.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
     String body = "grant_type=password&username=" + urlEncode(username_) + "&password=" + urlEncode(password_);
     int status = http.POST(body);
+    Serial.printf("Woffu API: POST %s -> %d\n", kAuthUrl, status);
     if (status != HTTP_CODE_OK) {
         http.end();
         return false;
@@ -53,7 +58,12 @@ bool WoffuClient::login() {
     JsonDocument doc;
     DeserializationError error = deserializeJson(doc, http.getStream());
     http.end();
-    if (error || !doc["accessToken"].is<const char*>()) {
+    if (error) {
+        Serial.printf("Woffu API: error al parsear la respuesta de login (%s)\n", error.c_str());
+        return false;
+    }
+    if (!doc["accessToken"].is<const char*>()) {
+        Serial.println("Woffu API: la respuesta de login no incluye accessToken");
         return false;
     }
 
@@ -74,11 +84,14 @@ WoffuStatus WoffuClient::fetchStatus() {
 
         HTTPClient http;
         if (!http.begin(client, kSlotsUrl)) {
+            Serial.printf("Woffu API: no se pudo iniciar la conexion a %s\n", kSlotsUrl);
             return WoffuStatus::UNKNOWN;
         }
+        http.useHTTP10(true);
         http.addHeader("Authorization", "Bearer " + accessToken_);
 
         int status = http.GET();
+        Serial.printf("Woffu API: GET %s -> %d\n", kSlotsUrl, status);
         if (status == HTTP_CODE_UNAUTHORIZED) {
             http.end();
             if (!login()) {
@@ -94,7 +107,12 @@ WoffuStatus WoffuClient::fetchStatus() {
         JsonDocument doc;
         DeserializationError error = deserializeJson(doc, http.getStream());
         http.end();
-        if (error || !doc.is<JsonArray>()) {
+        if (error) {
+            Serial.printf("Woffu API: error al parsear la respuesta de slots (%s)\n", error.c_str());
+            return WoffuStatus::UNKNOWN;
+        }
+        if (!doc.is<JsonArray>()) {
+            Serial.println("Woffu API: la respuesta de slots no es un array JSON");
             return WoffuStatus::UNKNOWN;
         }
 
