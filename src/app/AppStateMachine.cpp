@@ -395,7 +395,7 @@ void AppStateMachine::handleRunning() {
     }
 
     String reason;
-    PollMode mode = scheduler_.currentMode(nowMinutes, workdayInfo_, workdayValid_, reason);
+    PollMode mode = scheduler_.currentMode(nowMinutes, workdayInfo_, workdayValid_, lastWoffuStatus_, reason);
     if (!runningPollModeKnown_ || mode != runningPollMode_) {
         runningPollMode_ = mode;
         runningPollModeKnown_ = true;
@@ -414,6 +414,7 @@ void AppStateMachine::handleRunning() {
     nextPollAtMs_ = millis() + static_cast<uint32_t>(scheduler_.pollIntervalSeconds(mode)) * 1000UL;
 
     WoffuStatus status = woffuClient_.fetchStatus();
+    lastWoffuStatus_ = status;
     logPrintf("Estado Woffu: %s\n", woffuStatusName(status));
     if (woffuClient_.credentialsInvalid()) {
         led_.set(ledSlowBlink(LedColor::YELLOW));

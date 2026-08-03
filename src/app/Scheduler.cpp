@@ -11,7 +11,7 @@ void Scheduler::configure(const DeviceConfig& config) {
 }
 
 PollMode Scheduler::currentMode(uint16_t nowMinutesOfDay, const WorkdayInfo& workday, bool workdayValid,
-                                 String& reason) const {
+                                 WoffuStatus lastStatus, String& reason) const {
     if (config_.forceActiveWindow) {
         reason = "ventana activa forzada (modo test)";
         return PollMode::ACTIVE;
@@ -39,6 +39,15 @@ PollMode Scheduler::currentMode(uint16_t nowMinutesOfDay, const WorkdayInfo& wor
 
     if (nowMinutesOfDay >= workday.startMinutes && nowMinutesOfDay < workday.endMinutes) {
         reason = "dentro de la ventana pasiva de fichaje de Woffu";
+        return PollMode::PASSIVE;
+    }
+
+    if (nowMinutesOfDay < workday.startMinutes && lastStatus == WoffuStatus::CLOCKED_IN) {
+        reason = "ya fichada la entrada antes de la ventana pasiva, se relaja el ritmo de sondeo";
+        return PollMode::PASSIVE;
+    }
+    if (nowMinutesOfDay >= workday.endMinutes && lastStatus == WoffuStatus::CLOCKED_OUT) {
+        reason = "ya fichada la salida despues de la ventana pasiva, se relaja el ritmo de sondeo";
         return PollMode::PASSIVE;
     }
 

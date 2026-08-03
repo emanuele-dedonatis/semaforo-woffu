@@ -43,6 +43,7 @@ private:
     uint32_t nextPollAtMs_ = 0;
     WorkdayInfo workdayInfo_;
     bool workdayValid_ = false;
+    WoffuStatus lastWoffuStatus_ = WoffuStatus::UNKNOWN;
     int lastWorkdayYday_ = -1;
     bool wifiWasConnected_ = false;
     uint32_t wifiConnectedAtMs_ = 0;
