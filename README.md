@@ -36,7 +36,7 @@ Los breakouts PN532 suelen tener un jumper/switch para elegir el modo (HSU/I2C/S
 
 ## Funcionamiento
 
-- **En cada arranque** (esté o no configurado el dispositivo): antes de abrir el portal intenta conectar a la WiFi guardada, sincronizar la hora y comprobar actualizaciones OTA (LEDs rotando verde→amarillo→rojo cada 1s mientras tanto, como indicador de "cargando"; hasta 20s de margen, o menos si todo va bien). Hecho eso (o agotado el margen), entra en `PORTAL_WINDOW`: si la WiFi llegó a conectar, dura 15s (o hasta que se desconecte el cliente) antes de pasar a modo normal, para poder reconfigurar o comprobar/instalar actualizaciones OTA sin necesidad de resetear de fábrica; si no llegó a conectar (primer arranque, tras un "Restablecer de fábrica", o credenciales incorrectas), el portal se queda abierto indefinidamente, porque no tiene sentido pasar a modo normal sin WiFi ni portal.
+- **En cada arranque** (esté o no configurado el dispositivo): antes de abrir el portal intenta conectar a la WiFi guardada, sincronizar la hora y comprobar actualizaciones OTA (LEDs rotando verde→amarillo→rojo cada 1s mientras tanto, como indicador de "cargando"; hasta 20s de margen, o menos si todo va bien). Hecho eso (o agotado el margen), entra en `PORTAL_WINDOW`: si la WiFi llegó a conectar, dura 30s (o hasta que se desconecte el cliente) antes de pasar a modo normal, para poder reconfigurar o comprobar/instalar actualizaciones OTA sin necesidad de resetear de fábrica; si no llegó a conectar (primer arranque, tras un "Restablecer de fábrica", o credenciales incorrectas), el portal se queda abierto indefinidamente, porque no tiene sentido pasar a modo normal sin WiFi ni portal.
 - **Modo normal (`RUNNING`)**: el portal se apaga, se conecta a la WiFi configurada, se sincroniza la hora (NTP + zona horaria por geolocalización IP) y arranca el sondeo a Woffu (LEDs rotando verde→amarillo→rojo mientras tanto, para no confundir esa espera con estar apagado por horario). El `Scheduler` decide el ritmo según la hora y la jornada que reporta Woffu: **off** (LEDs apagados) fuera del horario configurado o en fin de semana/festivo, **pasiva** (cada 15 min) durante la ventana de fichaje de la jornada, y **activa** (cada 60s) el resto del tiempo dentro del horario, para detectar el fichaje/desfichaje con poca latencia.
 - El estado que devuelve Woffu se traduce directamente a color: 🔴 no fichado, 🟢 fichado, 🟡 desconocido (fallo de red o de la API, sin reintentos adicionales — se reintenta en el siguiente ciclo de polling). El amarillo tiene dos variantes según si el fallo depende o no de la configuración introducida por el usuario:
   - **Amarillo fijo** — fallo puntual que no depende de la configuración (Woffu caído, error de red transitorio, etc.): se reintenta solo, sin más acción por parte del usuario.
@@ -78,7 +78,7 @@ Primer arranque: se abre el portal de configuración, se detecta la zona horaria
 
 ```
 [+0s] Semaforo Woffu - firmware 1.1.3-dev.9f12992
-[+0s] Ventana de portal de configuracion abierta (15s, o hasta que se desconecte el cliente).
+[+0s] Ventana de portal de configuracion abierta (30s, o hasta que se desconecte el cliente).
 [+0s] Portal WiFi: Semaforo-A1B2C3, password: 74019283 (192.168.4.1)
 [+0s] WiFi conectado, IP: 192.168.22.24. Detectando zona horaria y sincronizando hora por NTP...
 [+1s] Geolocalizacion IP: GET http://ip-api.com/json/?fields=status,message,offset,timezone,city,country -> 200

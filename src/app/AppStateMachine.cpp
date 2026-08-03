@@ -10,7 +10,7 @@ constexpr uint8_t kPinLedRed = 25;
 constexpr uint8_t kPinLedYellow = 26;
 constexpr uint8_t kPinLedGreen = 27;
 constexpr uint8_t kPinNfcCs = 5; // VSPI: SCK=18, MISO=19, MOSI=23 (bus SPI global), CS dedicado en GPIO5
-constexpr uint32_t kPortalWaitMs = 15000; // espera inicial sin nadie conectado; una vez conectado no hay límite hasta que se desconecta
+constexpr uint32_t kPortalWaitMs = 30000; // espera inicial sin nadie conectado; una vez conectado no hay límite hasta que se desconecta
 constexpr uint32_t kNtpSyncTimeoutMs = 15000; // aviso si no ha sincronizado NTP en este tiempo desde que hay WiFi
 constexpr uint32_t kWifiConnectTimeoutMs = 20000; // error si no conecta a la WiFi configurada en este tiempo desde RUNNING
 constexpr uint32_t kConnectingTimeoutMs = 20000; // tiempo maximo en CONNECTING antes de abrir el portal igualmente
@@ -196,7 +196,7 @@ void AppStateMachine::loop() {
     // se cierra sola por timeout cuando hay conexion WiFi real.
     if (state_ == AppState::PORTAL_WINDOW && !portalClientConnected_ && wifi_.isConnected() &&
         millis() >= portalWindowDeadlineMs_) {
-        logPrintln("Ventana de portal cerrada: nadie se conecto en 15s. Pasando a modo normal.");
+        logPrintln("Ventana de portal cerrada: nadie se conecto en 30s. Pasando a modo normal.");
         enterRunning();
     }
 
@@ -240,7 +240,7 @@ void AppStateMachine::enterPortalWindow() {
     // portal esta abierto, y la comprobacion/actualizacion OTA del propio
     // portal la necesita para llegar a GitHub.
     state_ = AppState::PORTAL_WINDOW;
-    logPrintln("Ventana de portal de configuracion abierta (15s si hay WiFi, o hasta que se desconecte el "
+    logPrintln("Ventana de portal de configuracion abierta (30s si hay WiFi, o hasta que se desconecte el "
                "cliente; indefinida mientras no haya conexion WiFi).");
     portal_.begin(config_.get(), config_.hasLearnedCard());
     portalWindowDeadlineMs_ = millis() + kPortalWaitMs;
