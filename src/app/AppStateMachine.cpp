@@ -484,15 +484,16 @@ void AppStateMachine::handleRunning() {
                     logPrintln("Woffu API: error al registrar el fichaje por NFC.");
                     led_.set(ledFastBlink(LedColor::YELLOW));
                 }
-                // Fuerza un repoll real tras la ventana de resultado, para que el
-                // color definitivo del semaforo salga siempre de un fetchStatus()
-                // real y no de una suposicion optimista (ver Woffu API arriba).
-                nextPollAtMs_ = millis();
             } else {
                 logPrintln("NFC: UID no coincide con la tarjeta aprendida.");
                 led_.set(ledFastBlink(LedColor::RED));
             }
 
+            // Fuerza un repoll real justo despues de la ventana de resultado (en
+            // vez de esperar al siguiente ciclo normal, que puede tardar hasta
+            // ~60s): sin esto el LED se quedaba parpadeando indefinidamente tras
+            // un mismatch en vez de volver a mostrar el estado real de Woffu.
+            nextPollAtMs_ = millis();
             nfcSignState_ = NfcSignState::RESULT;
             nfcSignResultUntilMs_ = millis() + kNfcResultHoldMs;
             return;
