@@ -1,6 +1,6 @@
 # Semáforo Woffu
 
-Firmware para un dispositivo ESP32 que muestra visualmente el estado de fichaje de [Woffu](https://woffu.com/) mediante un semáforo LED: 🔴 no fichado, 🟢 fichado, 🟡 estado desconocido.
+Firmware para un dispositivo ESP32 que muestra visualmente el estado de fichaje de [Woffu](https://woffu.com/) mediante un semáforo LED: 🔴 no fichado, 🟢 fichado, 🟡 estado desconocido. Opcionalmente permite fichar/desfichar acercando una tarjeta NFC (lector PN532).
 
 ## Hardware
 
@@ -21,6 +21,19 @@ El módulo de semáforo tiene 4 pines (GND, R, Y, G; cátodo común, se enciende
 
 Los LEDs se manejan como GPIO digitales on/off (sin PWM): el brillo es fijo al máximo y no es configurable.
 
+### NFC (opcional)
+
+Lector PN532 por SPI (bus VSPI), para fichar/desfichar acercando una tarjeta:
+
+| Módulo PN532 (modo SPI) | ESP32 |
+|---|---|
+| SCK | GPIO18 |
+| MISO | GPIO19 |
+| MOSI | GPIO23 |
+| SS/CS | GPIO5 |
+
+Los breakouts PN532 suelen tener un jumper/switch para elegir el modo (HSU/I2C/SPI) — confirmar que está en modo SPI. Si el lector no se detecta, el firmware sigue funcionando con normalidad, solo sin fichaje por NFC (ver `Arquitectura.md`).
+
 ## Funcionamiento
 
 - **En cada arranque** (esté o no configurado el dispositivo): antes de abrir el portal intenta conectar a la WiFi guardada, sincronizar la hora y comprobar actualizaciones OTA (LEDs rotando verde→amarillo→rojo cada 1s mientras tanto, como indicador de "cargando"; hasta 20s de margen, o menos si todo va bien). Hecho eso (o agotado el margen), entra en `PORTAL_WINDOW`: si la WiFi llegó a conectar, dura 15s (o hasta que se desconecte el cliente) antes de pasar a modo normal, para poder reconfigurar o comprobar/instalar actualizaciones OTA sin necesidad de resetear de fábrica; si no llegó a conectar (primer arranque, tras un "Restablecer de fábrica", o credenciales incorrectas), el portal se queda abierto indefinidamente, porque no tiene sentido pasar a modo normal sin WiFi ni portal.
@@ -29,6 +42,7 @@ Los LEDs se manejan como GPIO digitales on/off (sin PWM): el brillo es fijo al m
   - **Amarillo fijo** — fallo puntual que no depende de la configuración (Woffu caído, error de red transitorio, etc.): se reintenta solo, sin más acción por parte del usuario.
   - **Amarillo parpadeando** — fallo persistente que sí depende de la configuración y requiere revisarla desde el portal: no se ha podido conectar a la WiFi configurada (SSID/password incorrectos), o Woffu rechaza el usuario/password configurados.
 - Las actualizaciones OTA se comprueban solas en cuanto el dispositivo tiene WiFi y hora sincronizada (sin depender de que nadie abra la página del portal): la página muestra si el firmware está al día o si hay una versión nueva, y en ese caso ofrece un botón para instalarla. El pipeline de CI publica una nueva versión en GitHub Releases automáticamente al hacer push a `main`.
+- **Fichaje por NFC** (si hay una tarjeta aprendida, ver `## Configuración`): durante la ventana **activa** de polling (no durante la pasiva ni con el semáforo apagado), el lector NFC escucha continuamente. Al acercar una tarjeta los LEDs rotan rápido; si el UID no coincide con la aprendida, el rojo parpadea rápido unos segundos; si coincide, el verde parpadea rápido y se llama a la API de Woffu para fichar o desfichar (según el último estado conocido) — si esa llamada falla, el ámbar parpadea rápido en su lugar. Hay que retirar la tarjeta antes de que un nuevo tap se procese de nuevo.
 
 ## Configuración
 
@@ -42,7 +56,8 @@ Al arrancar sin datos guardados (o tras un "Restablecer de fábrica"), el dispos
 - **Forzar ventana activa** — ignora el horario configurado y la jornada de Woffu, sondeando siempre cada 60s; pensado para pruebas.
 - **Guardar y reiniciar** — persiste la configuración en NVS y reinicia en modo normal (`RUNNING`).
 - La comprobación de actualización OTA es automática (si hay conexión); si hay una versión nueva disponible aparece un botón **Actualizar** para descargarla e instalarla. Mientras se instala, la página se va recargando sola mostrando el progreso.
-- **Restablecer de fábrica** — borra la configuración guardada y reinicia, volviendo a abrir el portal.
+- **Restablecer de fábrica** — borra la configuración guardada (incluida la tarjeta NFC aprendida) y reinicia, volviendo a abrir el portal.
+- **Aprender tarjeta** (si hay un lector NFC conectado) — al pulsarlo los LEDs rotan rápido; acerca la tarjeta al lector para asociarla (sobrescribe la anterior si había una). No requiere reiniciar el dispositivo.
 
 ## Documentación
 
@@ -54,7 +69,7 @@ Al arrancar sin datos guardados (o tras un "Restablecer de fábrica"), el dispos
 ## Stack
 
 - PlatformIO + framework Arduino (`arduino-esp32`).
-- Librerías: WebServer y DNSServer (portal de configuración, incluidas en el core de `arduino-esp32`), HTTPClient/HTTPUpdate (API Woffu y OTA), Preferences (NVS), ArduinoJson.
+- Librerías: WebServer y DNSServer (portal de configuración, incluidas en el core de `arduino-esp32`), HTTPClient/HTTPUpdate (API Woffu y OTA), Preferences (NVS), ArduinoJson, Adafruit PN532 + Adafruit BusIO (lector NFC por SPI).
 - CI/CD: GitHub Actions + `semantic-release` (versionado y publicación de releases a partir de Conventional Commits).
 
 ## Ejemplo de log por serie

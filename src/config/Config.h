@@ -35,6 +35,15 @@ public:
     void clearOtaNote();
     bool takeOtaNote(String& fromVersion, String& toVersion);
 
+    // UID de la tarjeta NFC aprendida (fuera de DeviceConfig, igual que la nota
+    // de OTA: no requiere reboot para aplicarse, a diferencia del resto de
+    // config). Cacheado en RAM (no "consume-al-leer" como takeOtaNote(), hace
+    // falta en cada tap de tarjeta).
+    bool hasLearnedCard() const;
+    String learnedCardUid() const;
+    void setLearnedCardUid(const String& uidHex);
+
 private:
     DeviceConfig current_;
+    String learnedCardUid_;
 };

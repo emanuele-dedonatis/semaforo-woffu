@@ -18,6 +18,8 @@ Pensado para poder arrancar cada paso en una conversación nueva: basta con leer
 - `CertBundle` (`src/net/CertBundle.{h,cpp}`) + `data/cert/x509_crt_bundle.bin` — certificate bundle de Mozilla vendorizado y embebido, compartido por `WoffuClient` y `OtaUpdater` (ver Arquitectura.md, `## Certificate bundle (TLS)`).
 - `OtaUpdater` — `checkAndUpdate()` real: descarga `version.txt`, compara con `FIRMWARE_VERSION` (build flag embebido en release), y si difiere descarga `firmware.bin` vía `HTTPUpdate` desde GitHub Releases.
 - `tools/check_status.py` — script de verificación del flujo de login + estado de fichaje contra la API real de Woffu (login y endpoint confirmados y documentados en Arquitectura.md).
+- `tools/toggle_sign.py` — script de verificación del flujo de fichar/desfichar (`POST /api/svc/signs/signs`) contra la API real de Woffu (endpoint y body confirmados y documentados en Arquitectura.md).
+- **NFC** (`src/nfc/NfcReader.{h,cpp}`) — lector PN532 por SPI, polling edge-triggered con debounce de retirada. Aprendizaje de una única tarjeta autorizada desde el portal (`POST /nfc/learn`, persistida en NVS vía `Config::setLearnedCardUid()`, sin reboot). Fichaje/desfichaje automático dentro de `PollMode::ACTIVE` (`WoffuClient::toggleSign()`), con feedback de LEDs (`LedMode::ROTATE_FAST` + `BLINK_FAST`) — diseño completo en Arquitectura.md, `## NFC Reader`.
 - CI/CD (`.github/workflows/release.yml`, `package.json`, `.releaserc.json`, `tools/build_firmware.sh`) — `semantic-release` sobre push a `main`: analiza Conventional Commits, compila el firmware con la versión calculada como build flag, y publica `firmware.bin`/`version.txt` como assets del Release (diseño en Arquitectura.md, `## CI/CD`).
 
 ## Pendiente
@@ -25,10 +27,11 @@ Pensado para poder arrancar cada paso en una conversación nueva: basta con leer
 Nada del MVP. Próximos pasos:
 
 - Flashear en hardware real y validar el flujo completo end-to-end (portal → `RUNNING` → polling → LED → OTA disparado desde el portal → release real via CI que dispare una actualización OTA).
+- Validar el módulo PN532 en hardware real: cableado SPI, aprendizaje desde el portal, fichaje/desfichaje con tarjeta aprendida y con una tarjeta distinta, y que `factoryReset()` borra la tarjeta.
 - Ver "Futuro" más abajo para alcance post-MVP.
 
 ## Futuro (fuera del MVP, ver Requisitos.md)
 
-- Fichaje automático (bluetooth del móvil/portátil, o NFC).
+- Fichaje automático adicional (bluetooth del móvil/portátil).
 - Conectividad con servidor externo (controlo remoto, bot telegram).
 - Firmware firmado / flash encryption (hardening opcional, descartado para el MVP).

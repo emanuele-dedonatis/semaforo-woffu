@@ -2,6 +2,7 @@
 
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <time.h>
 
 #include "Log.h"
 #include "net/CertBundle.h"
@@ -12,6 +13,28 @@ constexpr const char* kSlotsUrl = "https://app.woffu.com/api/svc/signs/v2/signs/
 constexpr const char* kUsersUrl = "https://app.woffu.com/api/users";
 constexpr const char* kWorkdayUrlPrefix = "https://app.woffu.com/api/svc/core/users/";
 constexpr const char* kWorkdayUrlSuffix = "/diarysummaries/workday";
+// Verificado contra la API real con tools/toggle_sign.py: el body no lleva
+// UserId (el servidor lo infiere del token), y fichar/desfichar es la misma
+// llamada en ambos sentidos (el servidor decide segun el ultimo estado
+// registrado del usuario).
+constexpr const char* kSignsUrl = "https://app.woffu.com/api/svc/signs/signs";
+
+// Minutos al oeste de UTC, misma convencion que JS Date.prototype.getTimezoneOffset()
+// (positivo si la zona esta detras de UTC - signo invertido respecto a lo intuitivo,
+// ver tools/toggle_sign.py). El toolchain de arduino-esp32 no expone tm_gmtoff en
+// 'struct tm', asi que el offset se calcula por diferencia: se reinterpretan los
+// campos de la hora UTC actual como si fueran hora local (mktime) y se compara con
+// el instante real. Como TimeSync::begin() siempre llama a configTime() con un
+// offset fijo (daylightOffset_sec=0, el ajuste de verano ya viene aplicado por
+// ip-api.com), no hay reglas de DST que mktime() deba resolver aqui.
+int timezoneOffsetMinutes() {
+    time_t now = time(nullptr);
+    struct tm utc;
+    gmtime_r(&now, &utc);
+    time_t utcFieldsAsLocal = mktime(&utc);
+    long offsetSecondsEast = static_cast<long>(difftime(now, utcFieldsAsLocal));
+    return static_cast<int>(-offsetSecondsEast / 60);
+}
 
 String urlEncode(const String& value) {
     String encoded;
@@ -140,6 +163,51 @@ bool WoffuClient::authenticatedGet(const String& url, JsonDocument& doc) {
     }
 
     return false;
+}
+
+bool WoffuClient::authenticatedPostJson(const String& url, const String& jsonBody) {
+    if (accessToken_.isEmpty() && !login()) {
+        return false;
+    }
+
+    // Mismo patron de reintento tras 401 que authenticatedGet().
+    for (int attempt = 0; attempt < 2; attempt++) {
+        WiFiClientSecure client;
+        applyCertBundle(client);
+
+        HTTPClient http;
+        if (!http.begin(client, url)) {
+            logPrintf("Woffu API: no se pudo iniciar la conexion a %s\n", url.c_str());
+            return false;
+        }
+        http.useHTTP10(true);
+        http.addHeader("Authorization", "Bearer " + accessToken_);
+        http.addHeader("Content-Type", "application/json");
+
+        int status = http.POST(jsonBody);
+        logPrintf("Woffu API: POST %s -> %d\n", url.c_str(), status);
+        if (status == HTTP_CODE_UNAUTHORIZED) {
+            http.end();
+            if (!login()) {
+                return false;
+            }
+            continue;
+        }
+        http.end();
+        return status >= 200 && status < 300;
+    }
+
+    return false;
+}
+
+bool WoffuClient::toggleSign() {
+    // El servidor infiere el usuario del token (no hace falta UserId aqui, a
+    // diferencia de /diarysummaries/workday) y decide fichar vs desfichar
+    // segun el ultimo estado registrado - mismo body en ambos sentidos.
+    String body = "{\"agreementEventId\":null,\"requestId\":null,\"deviceId\":\"WebApp\","
+                  "\"latitude\":null,\"longitude\":null,\"timezoneOffset\":" +
+                  String(timezoneOffsetMinutes()) + "}";
+    return authenticatedPostJson(kSignsUrl, body);
 }
 
 WoffuStatus WoffuClient::fetchStatus() {

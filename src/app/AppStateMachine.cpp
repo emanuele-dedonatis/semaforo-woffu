@@ -9,10 +9,14 @@ namespace {
 constexpr uint8_t kPinLedRed = 25;
 constexpr uint8_t kPinLedYellow = 26;
 constexpr uint8_t kPinLedGreen = 27;
+constexpr uint8_t kPinNfcCs = 5; // VSPI: SCK=18, MISO=19, MOSI=23 (bus SPI global), CS dedicado en GPIO5
 constexpr uint32_t kPortalWaitMs = 15000; // espera inicial sin nadie conectado; una vez conectado no hay límite hasta que se desconecta
 constexpr uint32_t kNtpSyncTimeoutMs = 15000; // aviso si no ha sincronizado NTP en este tiempo desde que hay WiFi
 constexpr uint32_t kWifiConnectTimeoutMs = 20000; // error si no conecta a la WiFi configurada en este tiempo desde RUNNING
 constexpr uint32_t kConnectingTimeoutMs = 20000; // tiempo maximo en CONNECTING antes de abrir el portal igualmente
+constexpr uint32_t kNfcLearnTimeoutMs = 30000; // tiempo maximo esperando una tarjeta durante el aprendizaje
+constexpr uint32_t kNfcLearnResultHoldMs = 3000; // cuanto se mantiene el "parpadeo ALL" tras aprender una tarjeta
+constexpr uint32_t kNfcResultHoldMs = 3000; // cuanto se mantiene el rojo/verde/ambar tras un tap en RUNNING
 
 LedCommand ledSlowBlink(LedColor color) {
     LedCommand cmd;
@@ -43,6 +47,20 @@ LedCommand ledRotate() {
     LedCommand cmd;
     cmd.color = LedColor::ALL;  // ignorado en modo ROTATE, ver LedController
     cmd.mode = LedMode::ROTATE;
+    return cmd;
+}
+
+LedCommand ledRotateFast() {
+    LedCommand cmd;
+    cmd.color = LedColor::ALL;  // ignorado en modo ROTATE_FAST, ver LedController
+    cmd.mode = LedMode::ROTATE_FAST;
+    return cmd;
+}
+
+LedCommand ledFastBlink(LedColor color) {
+    LedCommand cmd;
+    cmd.color = color;
+    cmd.mode = LedMode::BLINK_FAST;
     return cmd;
 }
 
@@ -83,6 +101,9 @@ const char* woffuStatusName(WoffuStatus status) {
 void AppStateMachine::begin() {
     config_.begin();
     led_.begin(kPinLedRed, kPinLedYellow, kPinLedGreen);
+    // Fallo no fatal: el dispositivo sigue funcionando sin fichaje por NFC si
+    // el lector no responde (cableado incorrecto, modulo en otro modo...).
+    nfcReader_.begin(kPinNfcCs);
     // Rotando desde el primer instante: portal_.begin() (mas abajo, via
     // enterPortalWindow()) incluye un escaneo de redes WiFi que ya tarda unos
     // segundos por si solo, y sin esto los LEDs se quedarian apagados durante
@@ -221,8 +242,10 @@ void AppStateMachine::enterPortalWindow() {
     state_ = AppState::PORTAL_WINDOW;
     logPrintln("Ventana de portal de configuracion abierta (15s si hay WiFi, o hasta que se desconecte el "
                "cliente; indefinida mientras no haya conexion WiFi).");
-    portal_.begin(config_.get());
+    portal_.begin(config_.get(), config_.hasLearnedCard());
     portalWindowDeadlineMs_ = millis() + kPortalWaitMs;
+    nfcLearnActive_ = false;
+    nfcLearnResultUntilMs_ = 0;
     updateLedForCurrentState();
 }
 
@@ -276,6 +299,33 @@ void AppStateMachine::handlePortal() {
                 return;
             }
         }
+    }
+
+    if (!nfcLearnActive_ && portal_.takeNfcLearnRequested()) {
+        nfcLearnActive_ = true;
+        nfcLearnDeadlineMs_ = millis() + kNfcLearnTimeoutMs;
+        logPrintln("NFC: aprendizaje iniciado desde el portal, esperando tarjeta...");
+        led_.set(ledRotateFast());
+    }
+    if (nfcLearnActive_) {
+        String uid;
+        if (nfcReader_.poll(uid)) {
+            config_.setLearnedCardUid(uid);
+            logPrintf("NFC: tarjeta aprendida (UID %s).\n", uid.c_str());
+            portal_.reportNfcLearnSuccess(uid);
+            led_.set(ledFastBlink(LedColor::ALL));
+            nfcLearnActive_ = false;
+            nfcLearnResultUntilMs_ = millis() + kNfcLearnResultHoldMs;
+        } else if (millis() >= nfcLearnDeadlineMs_) {
+            logPrintln("NFC: aprendizaje cancelado (no se detecto ninguna tarjeta a tiempo).");
+            portal_.reportNfcLearnTimeout();
+            nfcLearnActive_ = false;
+            updateLedForCurrentState();
+        }
+    }
+    if (nfcLearnResultUntilMs_ != 0 && millis() >= nfcLearnResultUntilMs_) {
+        nfcLearnResultUntilMs_ = 0;
+        updateLedForCurrentState();
     }
 
     DeviceConfig newConfig;
@@ -406,6 +456,47 @@ void AppStateMachine::handleRunning() {
     if (mode == PollMode::OFF) {
         led_.set(ledOff());
         return;
+    }
+
+    // NFC: escucha continuamente en cada tick, independiente del throttle de
+    // polling HTTP de mas abajo, y solo dentro de PollMode::ACTIVE (fuera del
+    // tramo de "ventana pasiva" que reporta Woffu).
+    if (mode == PollMode::ACTIVE) {
+        if (nfcSignState_ == NfcSignState::RESULT) {
+            if (millis() < nfcSignResultUntilMs_) {
+                return;  // se sigue mostrando el resultado, no lo pisa el color normal de abajo
+            }
+            nfcSignState_ = NfcSignState::IDLE;
+        }
+
+        String uid;
+        if (nfcReader_.poll(uid)) {
+            logPrintf("NFC: tarjeta detectada (UID %s).\n", uid.c_str());
+            led_.set(ledRotateFast());
+
+            if (config_.hasLearnedCard() && uid == config_.learnedCardUid()) {
+                const char* accion = (lastWoffuStatus_ == WoffuStatus::CLOCKED_IN) ? "salida" : "entrada";
+                logPrintf("NFC: UID coincide con la tarjeta aprendida. Fichando %s...\n", accion);
+                if (woffuClient_.toggleSign()) {
+                    logPrintf("Woffu API: fichaje de %s registrado por NFC.\n", accion);
+                    led_.set(ledFastBlink(LedColor::GREEN));
+                } else {
+                    logPrintln("Woffu API: error al registrar el fichaje por NFC.");
+                    led_.set(ledFastBlink(LedColor::YELLOW));
+                }
+                // Fuerza un repoll real tras la ventana de resultado, para que el
+                // color definitivo del semaforo salga siempre de un fetchStatus()
+                // real y no de una suposicion optimista (ver Woffu API arriba).
+                nextPollAtMs_ = millis();
+            } else {
+                logPrintln("NFC: UID no coincide con la tarjeta aprendida.");
+                led_.set(ledFastBlink(LedColor::RED));
+            }
+
+            nfcSignState_ = NfcSignState::RESULT;
+            nfcSignResultUntilMs_ = millis() + kNfcResultHoldMs;
+            return;
+        }
     }
 
     if (millis() < nextPollAtMs_) {

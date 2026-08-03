@@ -9,6 +9,7 @@
 #include "net/TimeSync.h"
 #include "net/WoffuClient.h"
 #include "net/OtaUpdater.h"
+#include "nfc/NfcReader.h"
 
 enum class AppState : uint8_t {
     INIT,
@@ -61,4 +62,15 @@ private:
     TimeSync timeSync_;
     WoffuClient woffuClient_;
     OtaUpdater otaUpdater_;
+    NfcReader nfcReader_;
+
+    // Aprendizaje de tarjeta NFC (solo dentro de PORTAL_WINDOW).
+    bool nfcLearnActive_ = false;
+    uint32_t nfcLearnDeadlineMs_ = 0;
+    uint32_t nfcLearnResultUntilMs_ = 0;
+
+    // Fichaje por NFC (solo dentro de RUNNING + PollMode::ACTIVE).
+    enum class NfcSignState : uint8_t { IDLE, RESULT };
+    NfcSignState nfcSignState_ = NfcSignState::IDLE;
+    uint32_t nfcSignResultUntilMs_ = 0;
 };

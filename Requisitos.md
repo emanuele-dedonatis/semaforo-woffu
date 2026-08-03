@@ -23,9 +23,21 @@ Compatible con cualquier placa ESP32 que tenga WiFi (el provisioning y el OTA so
 - Sin reintentos ante fallo de conexión (WiFi o API Woffu): un fallo pasa el LED a ámbar y se reintenta en el siguiente ciclo de polling normal (activo/pasivo), sin backoff adicional. Excepción: si no se consigue conectar a la WiFi configurada, o si Woffu rechaza las credenciales configuradas (usuario/password incorrectos), se registra un error por el puerto serie y el LED pasa a ámbar parpadeando en vez de fijo, para distinguir un problema de configuración persistente de un fallo puntual.
 - Sincronización horaria automática por NTP al arrancar. Zona horaria detectada automáticamente por geolocalización de la IP pública (sin campo que configurar en el portal, ver `## Cliente Woffu`/`TimeSync` en Arquitectura.md).
 
+## Fichaje por NFC (opcional)
+
+- Lector PN532 por SPI. Permite fichar/desfichar acercando una tarjeta/badge, además de (no en vez de) la consulta periódica de estado que ya hace el MVP.
+- **Aprendizaje de una única tarjeta autorizada**, desde el portal de configuración (botón "Aprender tarjeta", disponible siempre que el portal esté abierto): al pulsarlo, los LEDs rotan rápido; al acercar una tarjeta, se guarda su UID (sobrescribiendo la anterior si había una, sin paso de confirmación aparte más allá del aviso del propio botón) y los LEDs parpadean juntos rápido unos segundos. Si no se acerca ninguna tarjeta a tiempo, se cancela con un aviso en la página, sin afectar a la tarjeta ya aprendida (si había una). No requiere reiniciar el dispositivo.
+- **Fichaje/desfichaje normal**: el lector escucha continuamente, pero solo durante la **ventana activa** de polling (ver `## Polling adaptativo` arriba) — ni en la ventana pasiva ni con el semáforo apagado. Al acercar una tarjeta, los LEDs rotan rápido (indicador de "procesando"):
+  - Si el UID no coincide con la tarjeta aprendida: el rojo parpadea rápido unos segundos. Fin, sin llamada a Woffu.
+  - Si coincide: el verde parpadea rápido unos segundos, y se llama a la API de Woffu para fichar (si el usuario no estaba fichado) o desfichar (si ya lo estaba) — el propio backend de Woffu decide la dirección según el último estado registrado, el firmware no se lo indica explícitamente. Si esa llamada falla, el ámbar parpadea rápido en su lugar.
+  - Hay que retirar la tarjeta del lector antes de que un nuevo acercamiento se procese como un tap nuevo (evita fichar/desfichar varias veces seguidas por descuido).
+- Todas las interacciones (tarjeta detectada, coincide o no, llamada a Woffu y resultado, aprendizaje) se registran por el puerto serie.
+- Sin lector conectado (o si no se detecta al arrancar), el dispositivo sigue funcionando con normalidad, simplemente sin esta feature.
+- Restablecer de fábrica también borra la tarjeta aprendida.
+
 ## Funcionalidades futuras
 
-- Fichaje automático (p.ej. detectando conexión bluetooth del móvil o del portátil, o por NFC).
+- Fichaje automático adicional (p.ej. detectando conexión bluetooth del móvil o del portátil).
 - Conectividad con un servidor externo (p.ej. comandos desde Telegram).
 
 ## Hardware
@@ -81,4 +93,4 @@ Al cerrarse la ventana de portal (o al terminar el "cargando" inicial si nadie s
 ## Stack de desarrollo
 
 - VSCode + **PlatformIO**, framework **Arduino** (`arduino-esp32`).
-- Librerías: WebServer y DNSServer (portal de configuración, incluidas en el core de `arduino-esp32`), HTTPClient/HTTPUpdate (API Woffu y OTA), Preferences (NVS), ArduinoJson.
+- Librerías: WebServer y DNSServer (portal de configuración, incluidas en el core de `arduino-esp32`), HTTPClient/HTTPUpdate (API Woffu y OTA), Preferences (NVS), ArduinoJson, Adafruit PN532 + Adafruit BusIO (lector NFC por SPI).

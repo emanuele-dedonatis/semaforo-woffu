@@ -10,9 +10,12 @@ class DNSServer;
 // (independiente del aviso estatico post-reboot, ver otaStatusMessage_).
 enum class OtaUiState : uint8_t { IDLE, CHECKING, UP_TO_DATE, AVAILABLE, UPDATING, ERROR };
 
+// Estado del widget de aprendizaje de tarjeta NFC, mismo patron que OtaUiState.
+enum class NfcLearnUiState : uint8_t { IDLE, WAITING, SUCCESS, TIMEOUT, ERROR };
+
 class ProvisioningPortal {
 public:
-    void begin(const DeviceConfig& current);
+    void begin(const DeviceConfig& current, bool hasLearnedCard);
     void loop();
     void stop();
     bool hasClient() const;
@@ -32,13 +35,22 @@ public:
     void reportOtaProgress(size_t current, size_t total);
     void reportOtaError(const String& message);
 
+    bool takeNfcLearnRequested();
+    // uidHex completo solo se usa para calcular la mascara mostrada en la
+    // pagina (p.ej. "04..C3"); nunca se expone en claro.
+    void reportNfcLearnSuccess(const String& uidHex);
+    void reportNfcLearnTimeout();
+    void reportNfcLearnError(const String& message);
+
 private:
     void handleRoot();
     void handleSave();
     void handleOtaUpdate();
     void handleFactoryReset();
+    void handleNfcLearn();
     void handleNotFound();
     String renderOtaNotice();
+    String renderNfcNotice();
 
     WebServer* server_ = nullptr;
     DNSServer* dns_ = nullptr;
@@ -55,4 +67,10 @@ private:
     String otaLatestVersion_;
     String otaErrorMessage_;
     uint8_t otaProgressPercent_ = 0;
+
+    bool pendingNfcLearn_ = false;
+    NfcLearnUiState nfcLearnUiState_ = NfcLearnUiState::IDLE;
+    bool hasLearnedCard_ = false;
+    String nfcLearnUidMasked_;
+    String nfcLearnErrorMessage_;
 };

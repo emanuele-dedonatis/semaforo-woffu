@@ -4,12 +4,12 @@ Guía para Claude Code al trabajar en este repositorio.
 
 ## Qué es este proyecto
 
-Firmware para un dispositivo ESP32 que muestra el estado de fichaje de [Woffu](https://woffu.com/) mediante un semáforo LED (rojo/verde/ámbar). Ver [Requisitos.md](Requisitos.md) para el detalle funcional completo (MVP, hardware, OTA, portal de configuración WiFi, seguridad).
+Firmware para un dispositivo ESP32 que muestra el estado de fichaje de [Woffu](https://woffu.com/) mediante un semáforo LED (rojo/verde/ámbar), con fichaje/desfichaje opcional por tarjeta NFC (lector PN532). Ver [Requisitos.md](Requisitos.md) para el detalle funcional completo (MVP, hardware, OTA, portal de configuración WiFi, seguridad, NFC).
 
 ## Stack
 
 - PlatformIO + framework Arduino (`arduino-esp32`).
-- Librerías: WebServer y DNSServer (portal de configuración, incluidas en el core de `arduino-esp32`), HTTPClient/HTTPUpdate (API Woffu y OTA), Preferences (NVS), ArduinoJson.
+- Librerías: WebServer y DNSServer (portal de configuración, incluidas en el core de `arduino-esp32`), HTTPClient/HTTPUpdate (API Woffu y OTA), Preferences (NVS), ArduinoJson, Adafruit PN532 + Adafruit BusIO (lector NFC por SPI).
 - CI/CD: GitHub Actions + `semantic-release` (Node), disparado en push a `main` — ver `## CI/CD` en Arquitectura.md.
 
 ## Mantenimiento de la documentación

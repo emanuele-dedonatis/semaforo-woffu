@@ -19,3 +19,19 @@ python3 tools/check_status.py --username tu@email.com
 - Si no se pasa `--password`, se pide de forma interactiva (no queda en el historial de la shell).
 - `-v` / `--verbose` muestra por stderr el JSON completo de login y de slots.
 - Por stdout imprime únicamente `FICHADO` o `NO_FICHADO`.
+
+## `toggle_sign.py`
+
+Verifica el flujo de **fichar/defichar** (`POST /api/svc/signs/signs`) contra la API real de Woffu, antes/durante la implementación de `WoffuClient::toggleSign()` en el firmware (fichaje por NFC, ver `Arquitectura.md`).
+
+**AVISO**: a diferencia de `check_status.py` (solo lectura), este script **tiene un efecto real** sobre la cuenta: si estás fichado te desficha, y viceversa (el propio backend de Woffu decide la dirección, no hay parámetro para elegirla). Pide confirmación interactiva antes del POST, salvo que se pase `--yes`.
+
+Requiere Python 3, sin dependencias externas.
+
+```
+python3 tools/toggle_sign.py --username tu@email.com
+```
+
+- Muestra el estado antes y después del toggle (reutilizando la misma lógica que `check_status.py`).
+- `-v` / `--verbose` muestra por stderr el UserId, el cuerpo de la respuesta del POST y los slots completos.
+- `--yes` salta la confirmación interactiva (útil para pruebas repetidas).

@@ -58,8 +58,9 @@ void LedController::taskFn(void* params) {
 
         LedColor activeColor = current.color;
         bool lit;
-        if (current.mode == LedMode::ROTATE) {
-            if ((xTaskGetTickCount() - lastRotate) >= kRotatePeriod) {
+        if (current.mode == LedMode::ROTATE || current.mode == LedMode::ROTATE_FAST) {
+            TickType_t rotatePeriod = (current.mode == LedMode::ROTATE_FAST) ? kFastPeriod : kRotatePeriod;
+            if ((xTaskGetTickCount() - lastRotate) >= rotatePeriod) {
                 rotateIndex = (rotateIndex + 1) % kRotateSteps;
                 lastRotate = xTaskGetTickCount();
             }

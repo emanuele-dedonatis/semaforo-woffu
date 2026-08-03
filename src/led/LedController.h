@@ -5,10 +5,13 @@
 #include <freertos/queue.h>
 
 enum class LedColor : uint8_t { OFF, RED, YELLOW, GREEN, ALL };
-// ROTATE ignora el campo color de LedCommand: va turnandose solo entre verde,
-// amarillo y rojo (ver LedController.cpp), pensado como "cargando" mientras
-// se conecta a la WiFi/NTP antes de abrir el portal (ver AppStateMachine).
-enum class LedMode : uint8_t { OFF, SOLID, BLINK_SLOW, BLINK_FAST, ROTATE };
+// ROTATE/ROTATE_FAST ignoran el campo color de LedCommand: van turnandose solo
+// entre verde, amarillo y rojo (ver LedController.cpp), pensado como "cargando"
+// mientras se conecta a la WiFi/NTP antes de abrir el portal (ver
+// AppStateMachine). ROTATE_FAST es el mismo patron pero al ritmo de
+// kFastPeriod, usado como feedback de "procesando" durante el aprendizaje o
+// deteccion de tarjetas NFC.
+enum class LedMode : uint8_t { OFF, SOLID, BLINK_SLOW, BLINK_FAST, ROTATE, ROTATE_FAST };
 
 struct LedCommand {
     LedColor color = LedColor::OFF;

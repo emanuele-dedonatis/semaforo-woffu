@@ -16,6 +16,7 @@ void Config::begin() {
     current_.activeWindow.startMinutes = prefs.getUShort("win_s", 450);
     current_.activeWindow.endMinutes = prefs.getUShort("win_e", 1140);
     current_.forceActiveWindow = prefs.getBool("force_active", false);
+    learnedCardUid_ = prefs.getString("nfc_uid", "");
 
     prefs.end();
 }
@@ -81,6 +82,24 @@ bool Config::takeOtaNote(String& fromVersion, String& toVersion) {
     return true;
 }
 
+bool Config::hasLearnedCard() const {
+    return !learnedCardUid_.isEmpty();
+}
+
+String Config::learnedCardUid() const {
+    return learnedCardUid_;
+}
+
+void Config::setLearnedCardUid(const String& uidHex) {
+    Preferences prefs;
+    if (!prefs.begin(kNamespace, false)) {
+        return;
+    }
+    prefs.putString("nfc_uid", uidHex);
+    prefs.end();
+    learnedCardUid_ = uidHex;
+}
+
 void Config::factoryReset() {
     Preferences prefs;
     if (prefs.begin(kNamespace, false)) {
@@ -88,4 +107,5 @@ void Config::factoryReset() {
         prefs.end();
     }
     current_ = DeviceConfig{};
+    learnedCardUid_ = "";
 }

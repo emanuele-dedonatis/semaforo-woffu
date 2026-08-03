@@ -126,26 +126,37 @@ String scanSsidOptionsHtml(const String& currentSsid, const String& currentPassw
     return options;
 }
 
-// Solo se recarga sola la pagina durante UPDATING (sin JavaScript, para que
-// funcione tambien en el navegador cautivo restringido que abren iOS/Android
-// al conectarse al AP, ver scanSsidOptionsHtml() mas arriba): es el unico
-// estado en el que el usuario no deberia estar a la vez escribiendo en el
-// formulario de configuracion de la misma pagina, asi que el auto-refresco no
-// arriesga borrarle lo que este rellenando. El resto de estados (incluido
-// IDLE, que en un dispositivo sin WiFi guardada nunca llega a cambiar solo)
-// se muestran sin recargar - ver AppStateMachine::handleConnecting(), que ya
-// intenta resolver la comprobacion OTA antes de abrir el portal.
-String otaRefreshMetaFor(OtaUiState state) {
-    if (state == OtaUiState::UPDATING) {
+// Solo se recarga sola la pagina durante UPDATING/WAITING (sin JavaScript,
+// para que funcione tambien en el navegador cautivo restringido que abren
+// iOS/Android al conectarse al AP, ver scanSsidOptionsHtml() mas arriba): son
+// los unicos estados en los que el usuario no deberia estar a la vez
+// escribiendo en el formulario de configuracion de la misma pagina, asi que
+// el auto-refresco no arriesga borrarle lo que este rellenando. El resto de
+// estados (incluido IDLE, que en un dispositivo sin WiFi guardada nunca llega
+// a cambiar solo) se muestran sin recargar - ver
+// AppStateMachine::handleConnecting(), que ya intenta resolver la
+// comprobacion OTA antes de abrir el portal.
+String autoRefreshMetaFor(OtaUiState otaState, NfcLearnUiState nfcState) {
+    if (otaState == OtaUiState::UPDATING || nfcState == NfcLearnUiState::WAITING) {
         return "<meta http-equiv=\"refresh\" content=\"3;url=/\">";
     }
     return "";
 }
 
+// Nunca se muestra el UID completo en la pagina: solo los primeros/ultimos
+// bytes, suficiente para distinguir "es esta tarjeta" a simple vista sin
+// exponer el identificador completo de la tarjeta fisica.
+String maskUid(const String& uidHex) {
+    if (uidHex.length() <= 4) {
+        return uidHex;
+    }
+    return uidHex.substring(0, 2) + ".." + uidHex.substring(uidHex.length() - 2);
+}
+
 const char kPageTemplate[] = R"HTML(<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Semaforo Woffu</title>
-%OTA_REFRESH_META%
+%AUTO_REFRESH_META%
 <style>
 body{font-family:sans-serif;max-width:480px;margin:2em auto;padding:0 1em;color:#222}
 label{display:block;margin-top:1em;font-weight:bold}
@@ -180,6 +191,8 @@ select{width:100%;padding:.5em;box-sizing:border-box;font-size:1em}
 <button type="submit">Guardar y reiniciar</button>
 </form>
 <hr>
+%NFC_WIDGET%
+<hr>
 <form method="POST" action="/factory-reset" onsubmit="return confirm('Seguro? Borra toda la configuracion.')">
 <button>Restablecer de fabrica</button></form>
 </body></html>)HTML";
@@ -190,8 +203,10 @@ const char kFactoryResetPage[] =
     "<!doctype html><html><body><h1>OK</h1><p>Restableciendo de fabrica y reiniciando...</p></body></html>";
 }
 
-void ProvisioningPortal::begin(const DeviceConfig& current) {
+void ProvisioningPortal::begin(const DeviceConfig& current, bool hasLearnedCard) {
     current_ = current;
+    hasLearnedCard_ = hasLearnedCard;
+    nfcLearnUiState_ = NfcLearnUiState::IDLE;
 
     uint8_t mac[6] = {0};
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
@@ -218,6 +233,7 @@ void ProvisioningPortal::begin(const DeviceConfig& current) {
     server_->on("/save", HTTP_POST, [this]() { handleSave(); });
     server_->on("/ota/update", HTTP_POST, [this]() { handleOtaUpdate(); });
     server_->on("/factory-reset", HTTP_POST, [this]() { handleFactoryReset(); });
+    server_->on("/nfc/learn", HTTP_POST, [this]() { handleNfcLearn(); });
     server_->onNotFound([this]() { handleNotFound(); });
     server_->begin();
 }
@@ -297,6 +313,50 @@ void ProvisioningPortal::reportOtaError(const String& message) {
     otaErrorMessage_ = message;
 }
 
+bool ProvisioningPortal::takeNfcLearnRequested() {
+    bool value = pendingNfcLearn_;
+    pendingNfcLearn_ = false;
+    return value;
+}
+
+void ProvisioningPortal::reportNfcLearnSuccess(const String& uidHex) {
+    nfcLearnUiState_ = NfcLearnUiState::SUCCESS;
+    nfcLearnUidMasked_ = maskUid(uidHex);
+    hasLearnedCard_ = true;
+}
+
+void ProvisioningPortal::reportNfcLearnTimeout() {
+    nfcLearnUiState_ = NfcLearnUiState::TIMEOUT;
+}
+
+void ProvisioningPortal::reportNfcLearnError(const String& message) {
+    nfcLearnUiState_ = NfcLearnUiState::ERROR;
+    nfcLearnErrorMessage_ = message;
+}
+
+String ProvisioningPortal::renderNfcNotice() {
+    switch (nfcLearnUiState_) {
+        case NfcLearnUiState::IDLE: {
+            String status = hasLearnedCard_ ? "Tarjeta NFC aprendida: si." : "Tarjeta NFC aprendida: no.";
+            return "<p class=\"notice\">" + status + "</p>"
+                   "<form method=\"POST\" action=\"/nfc/learn\" onsubmit=\"return confirm('Esto "
+                   "sobrescribira la tarjeta autorizada actual (si hay una). Acerca la tarjeta al "
+                   "lector cuando se te indique. Continuar?')\"><button>Aprender tarjeta</button></form>";
+        }
+        case NfcLearnUiState::WAITING:
+            return "<p class=\"notice\">Acerca la tarjeta NFC al lector...</p>";
+        case NfcLearnUiState::SUCCESS:
+            return "<p class=\"notice\">Tarjeta aprendida correctamente (UID " +
+                   htmlEscape(nfcLearnUidMasked_) + ").</p>";
+        case NfcLearnUiState::TIMEOUT:
+            return "<p class=\"notice\">No se detecto ninguna tarjeta a tiempo. Vuelve a intentarlo.</p>";
+        case NfcLearnUiState::ERROR:
+            return "<p class=\"notice\">No se pudo iniciar el aprendizaje: " +
+                   htmlEscape(nfcLearnErrorMessage_) + "</p>";
+    }
+    return "";
+}
+
 String ProvisioningPortal::renderOtaNotice() {
     switch (otaUiState_) {
         case OtaUiState::IDLE:
@@ -334,12 +394,13 @@ void ProvisioningPortal::handleRoot() {
     // esta pagina. El progreso se ve recargando la propia pagina via
     // meta-refresh, sin JavaScript (ver comentario de scanSsidOptionsHtml()).
     String page(kPageTemplate);
-    page.replace("%OTA_REFRESH_META%", otaRefreshMetaFor(otaUiState_));
+    page.replace("%AUTO_REFRESH_META%", autoRefreshMetaFor(otaUiState_, nfcLearnUiState_));
     page.replace("%VERSION%", FIRMWARE_VERSION);
     page.replace("%OTA_STATUS%", otaStatusMessage_.isEmpty()
         ? ""
         : "<p class=\"notice\">" + htmlEscape(otaStatusMessage_) + "</p>");
     page.replace("%OTA_WIDGET%", renderOtaNotice());
+    page.replace("%NFC_WIDGET%", renderNfcNotice());
     page.replace("%SSID_OPTIONS%", ssidOptionsHtml_);
     page.replace("%WIFI_PASS%", htmlEscape(current_.wifiPassword));
     page.replace("%WOFFU_USER%", htmlEscape(current_.woffuUsername));
@@ -384,6 +445,13 @@ void ProvisioningPortal::handleOtaUpdate() {
 void ProvisioningPortal::handleFactoryReset() {
     pendingFactoryReset_ = true;
     server_->send(200, "text/html", kFactoryResetPage);
+}
+
+void ProvisioningPortal::handleNfcLearn() {
+    pendingNfcLearn_ = true;
+    nfcLearnUiState_ = NfcLearnUiState::WAITING;
+    server_->sendHeader("Location", "/", true);
+    server_->send(302, "text/plain", "");
 }
 
 void ProvisioningPortal::handleNotFound() {

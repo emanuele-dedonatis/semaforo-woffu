@@ -34,7 +34,7 @@ Basado en [Requisitos.md](Requisitos.md). Documento vivo, igual que el de requis
 
 - **INIT**: lee `Config` de NVS (Preferences).
 - **CONNECTING**: arranca la STA (`wifi_.begin()`) pero **todavía no** el AP/portal, tanto si hay credenciales guardadas como si no (sin SSID guardado, `wifi_.begin("", "")` simplemente nunca llega a conectar — incluir este caso en `CONNECTING` en vez de tener un estado `UNCONFIGURED` aparte no cambia el desenlace, ver `PORTAL_WINDOW` más abajo). Intenta conectar a la WiFi guardada, sincronizar la hora por NTP y comprobar actualizaciones OTA (`AppStateMachine::performOtaCheck()`) antes de que nadie pueda ver la página, para que esta se sirva ya con el resultado final en vez de depender de que se auto-refresque mientras el usuario podría estar rellenando el formulario (ver `## OTA`). LEDs rotando (`LedMode::ROTATE`, ver `## LED Controller`) como indicador de "cargando". Pasa a `PORTAL_WINDOW` en cuanto wifi+hora están listas, o a los `kConnectingTimeoutMs` (20s) si no (sin configurar, WiFi inalcanzable, credenciales cambiadas...).
-- **PORTAL_WINDOW**: se entra siempre desde `CONNECTING`, con la STA ya conectada, todavía intentándolo, o sin ninguna esperanza de conectar (sin credenciales). Aquí el ESP32 mantiene el AP del portal **y** la WiFi real en paralelo (`WIFI_MODE_APSTA`) — necesario para que la comprobación/actualización OTA del portal (disponible en esta ventana, ver `## OTA`) tenga salida a internet, tanto la que ya se intentó en `CONNECTING` como si la STA conecta más tarde (banderas `otaCheckTriggered_`, ver `## OTA`). El paso automático a `RUNNING` (por timeout de 15s sin nadie conectado, o al desconectarse el último cliente) solo ocurre si `wifi_.isConnected()` es cierto en ese momento: pasar a `RUNNING` sin WiFi dejaría el dispositivo sin WiFi **y** sin portal, sin ninguna forma de reconfigurarse, así que mientras la STA no esté conectada la ventana se queda abierta indefinidamente (se re-evalúa en cada `loop()`, así que en cuanto la STA conecta se cierra en el primer tick sin esperar un nuevo plazo de 15s). Si alguien se conecta, la ventana se queda abierta sin límite de tiempo mientras siga conectado (`WiFi.softAPgetStationNum() > 0`, consultado cada `loop()`) — independientemente del estado de la STA. Al entrar en `RUNNING`, `enterRunning()` solo repite `wifi_.begin()` si la STA no quedó ya conectada desde aquí.
+- **PORTAL_WINDOW**: se entra siempre desde `CONNECTING`, con la STA ya conectada, todavía intentándolo, o sin ninguna esperanza de conectar (sin credenciales). Aquí el ESP32 mantiene el AP del portal **y** la WiFi real en paralelo (`WIFI_MODE_APSTA`) — necesario para que la comprobación/actualización OTA del portal (disponible en esta ventana, ver `## OTA`) tenga salida a internet, tanto la que ya se intentó en `CONNECTING` como si la STA conecta más tarde (banderas `otaCheckTriggered_`, ver `## OTA`). El paso automático a `RUNNING` (por timeout de 15s sin nadie conectado, o al desconectarse el último cliente) solo ocurre si `wifi_.isConnected()` es cierto en ese momento: pasar a `RUNNING` sin WiFi dejaría el dispositivo sin WiFi **y** sin portal, sin ninguna forma de reconfigurarse, así que mientras la STA no esté conectada la ventana se queda abierta indefinidamente (se re-evalúa en cada `loop()`, así que en cuanto la STA conecta se cierra en el primer tick sin esperar un nuevo plazo de 15s). Si alguien se conecta, la ventana se queda abierta sin límite de tiempo mientras siga conectado (`WiFi.softAPgetStationNum() > 0`, consultado cada `loop()`) — independientemente del estado de la STA. Al entrar en `RUNNING`, `enterRunning()` solo repite `wifi_.begin()` si la STA no quedó ya conectada desde aquí. El aprendizaje de tarjeta NFC (ver `## NFC Reader`) corre dentro de esta ventana, sin ser un estado nuevo de la máquina: es un sub-flujo de `handlePortal()`, igual que la comprobación/instalación OTA.
 - **RUNNING**: AP y servidor web apagados del todo (para no dejar superficie de ataque innecesaria mientras opera). Arranca la conexión WiFi STA a la red real. Corre el scheduler de polling contra Woffu y refleja el estado en el semáforo.
 
 Al guardar el formulario, el dispositivo persiste en NVS y hace **reboot automático inmediato** (tras responder la página de confirmación HTTP). Si el usuario quiere seguir cambiando cosas, vuelve a entrar en la ventana de portal tras el reboot.
@@ -80,6 +80,8 @@ src/
     ProvisioningPortal.{h,cpp} # AP WiFi + DNS captivo + servidor HTTP con el formulario
   led/
     LedController.{h,cpp}     # LedTask, GPIO digital on/off, patrones de parpadeo
+  nfc/
+    NfcReader.{h,cpp}         # lector PN532 (SPI), polling edge-triggered para fichaje por NFC
 data/
   cert/x509_crt_bundle.bin  # bundle de CAs de Mozilla, vendorizado (ver sección TLS)
 ```
@@ -103,6 +105,8 @@ Namespace `cfg`:
 
 Los ritmos de polling (activo ~60s, pasivo ~900s) ya no son configurables: son constantes fijas en `Scheduler.cpp` (ver `## Cliente Woffu` y `## Scheduler`). El brillo tampoco: los LEDs son GPIO digital on/off, siempre al máximo, ver `## LED Controller`.
 
+Fuera de `DeviceConfig`, en el mismo namespace `cfg`, hay dos notas adicionales que no requieren el ciclo completo de guardado+reboot: `ota_from`/`ota_to` (ver `## OTA — detalle de implementación`) y `nfc_uid` (string, UID en hex de la tarjeta NFC aprendida — ver `## NFC Reader`; a diferencia de la nota de OTA, esta no se consume al leerla, se cachea en RAM y se usa en cada tap de tarjeta). `factoryReset()` (`prefs.clear()`) borra también `nfc_uid`.
+
 **Sin cifrado de NVS para el MVP**: cifrar de verdad el contenido de NVS en el ESP32 requiere activar *flash encryption* a nivel de eFuse (paso de fábrica/primer flasheo, irreversible en modo *release*, y que complica el flujo de OTA con firmas/cifrado de imágenes). Queda descartado para el MVP; la config permanece protegida solo por la password del AP de configuración. Se anota como posible mejora futura opcional para quien quiera más hardening.
 
 ## Portal de configuración (WiFi AP + HTTP)
@@ -116,6 +120,7 @@ Los ritmos de polling (activo ~60s, pasivo ~900s) ya no son configurables: son c
 3. `GET /` sirve un formulario HTML normal (controles nativos: texto, password, `<input type="time">` para las horas — con selector nativo en móvil, `<input type="number">` para los campos numéricos), prellenado con la configuración actual guardada. El campo SSID usa un `<select>` con las redes detectadas en el escaneo del paso 1 (opción con la SSID guardada preseleccionada si sigue estando entre las detectadas): se descartó deliberadamente `<input list>` + `<datalist>` porque el navegador cautivo que abren iOS/Android al conectarse al AP (CNA / popup "Iniciar sesión en red" — el flujo de acceso preferido, no se asume que el usuario abra un navegador normal) es un WebView muy limitado que en iOS normalmente no ejecuta JavaScript y tiene soporte pobre o nulo de `<datalist>`; `<select>` es un control nativo con soporte universal. La página muestra también la versión de firmware actual (`FIRMWARE_VERSION`, ver `## OTA — detalle de implementación`), útil para confirmar visualmente que un OTA se aplicó. Por el mismo motivo, también se imprime por Serial al arrancar (`main.cpp`).
 4. `POST /save` guarda todos los campos del formulario a la vez (a diferencia del diseño BLE por característica individual, aquí no hace falta un paso `APPLY_CONFIG` separado — el propio HTML envía todos los campos juntos en cada submit), responde una página de confirmación, y el orquestador persiste en NVS + reinicia.
 5. `POST /ota/update` y `POST /factory-reset`: acciones que disparan banderas leídas por el orquestador (igual que el guardado). La comprobación de OTA no tiene ruta propia: la dispara sola el orquestador en cuanto hay WiFi **y** hora sincronizada por NTP, sin depender de que nadie abra `GET /` (ver `## OTA` para el detalle de cómo se muestra el resultado y el progreso sin JavaScript, y por qué hace falta también la hora).
+6. `POST /nfc/learn`: arma el aprendizaje de tarjeta (bandera `pendingNfcLearn_`, mismo patrón que el resto) y responde con un 302 a `/`, igual que `handleOtaUpdate()`. Ver `## NFC Reader` para el detalle del flujo (temporizador, feedback de LEDs, estados de la página).
 
 ### `ProvisioningPortal` (`src/web/ProvisioningPortal.{h,cpp}`)
 
@@ -209,6 +214,29 @@ Devuelve el horario habitual de fichaje del día actual (el servidor decide qué
 
 `startTime`/`endTime` marcan la **ventana pasiva** (tramo en el que se espera que el usuario ya esté fichado, así que el estado cambia poco y basta con comprobarlo cada 15 min); el resto de la ventana de encendido configurada por el usuario es **ventana activa** (cada 30-60s). `isWeekend`/`isHoliday` a `true` apaga el dispositivo entero, sin llamar a `/signs/slots`. Ver `## Scheduler` para la lógica completa y `AppStateMachine::refreshWorkdayInfo()` para el cacheo (una consulta por día, dentro de la ventana de encendido).
 
+### Fichar/desfichar (toggle)
+
+```
+POST https://app.woffu.com/api/svc/signs/signs
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+
+{
+  "agreementEventId": null,
+  "requestId": null,
+  "deviceId": "WebApp",
+  "latitude": null,
+  "longitude": null,
+  "timezoneOffset": <minutos>
+}
+```
+
+Verificado contra la API real con `tools/toggle_sign.py` (a partir de un flujo capturado desde el navegador). Puntos importantes:
+
+- **No lleva `UserId`**: a diferencia de `/diarysummaries/workday`, aquí el servidor infiere el usuario a partir del propio `accessToken`.
+- **Misma llamada para fichar y para desfichar**: el body es idéntico en ambos sentidos, el backend de Woffu decide la dirección según el último estado registrado del usuario. El firmware (`WoffuClient::toggleSign()`) no indica ninguna dirección explícita; el texto de log ("fichando entrada"/"fichando salida") es solo informativo, basado en el último `WoffuStatus` cacheado por `AppStateMachine` (ver `## NFC Reader`), no en un campo del body.
+- **`timezoneOffset`**: misma convención que JS `Date.prototype.getTimezoneOffset()` (minutos al oeste de UTC, positivo si la zona está detrás de UTC — signo invertido respecto a lo intuitivo). El toolchain de `arduino-esp32` no expone `tm_gmtoff` en `struct tm`, así que `WoffuClient.cpp` lo calcula por diferencia: reinterpreta los campos de la hora UTC actual como si fueran hora local (`mktime()`) y compara con el instante real (`difftime()`) — válido sin reglas de DST porque `TimeSync::begin()` siempre llama a `configTime()` con un offset fijo (`daylightOffset_sec=0`, el ajuste de verano ya viene aplicado por `ip-api.com`, ver `## Zona horaria`).
+
 ### TLS
 
 `app.woffu.com` por HTTPS — usar el certificate bundle de `arduino-esp32` (igual que para OTA) en vez de pinnear certificados. Ver detalle de cómo se genera y embebe en `## Certificate bundle (TLS)`.
@@ -271,12 +299,42 @@ Sin reintentos ante fallo (mismo criterio que el resto del firmware): si la geol
 
 - GPIOs por defecto: R=25, Y=26, G=27 (libres en un ESP32 DevKit genérico, no son strapping pins). Ajustables en `AppStateMachine.cpp` si el cableado real difiere.
 - GPIO digital on/off (`pinMode`/`digitalWrite`), activo-alto (cátodo común, confirmado). Sin PWM: al quitarse el brillo configurable (siempre al máximo), un duty LEDC fijo a fondo de escala era equivalente a un simple HIGH/LOW, así que se simplificó a GPIO puro.
-- `LedTask` interpreta `{color, mode}` de la cola: `SOLID` (encendido fijo), `BLINK_SLOW` (ciclo ~1000ms), `BLINK_FAST` (~250ms, disponible pero sin uso actualmente), `ROTATE` (turna solo entre verde/amarillo/rojo cada ~1000ms, ignorando el campo `color` del comando — pensado como "cargando"), `OFF` (apagado). `color = ALL` enciende los tres a la vez (no aplica a `ROTATE`).
+- `LedTask` interpreta `{color, mode}` de la cola: `SOLID` (encendido fijo), `BLINK_SLOW` (ciclo ~1000ms), `BLINK_FAST` (~250ms), `ROTATE` (turna solo entre verde/amarillo/rojo cada ~1000ms, ignorando el campo `color` del comando — pensado como "cargando"), `ROTATE_FAST` (mismo patrón que `ROTATE` pero al ritmo de `BLINK_FAST`, ~250ms — feedback de "procesando" durante el aprendizaje/detección de tarjetas NFC, ver `## NFC Reader`), `OFF` (apagado). `color = ALL` enciende los tres a la vez (no aplica a `ROTATE`/`ROTATE_FAST`). `BLINK_FAST` se usa tanto en rojo/verde/ámbar (resultado de un tap NFC) como en `ALL` (confirmación de aprendizaje).
 - `ROTATE` desde el primer `led_.set()` en `AppStateMachine::begin()`, antes incluso de entrar en `CONNECTING`: cubre tambien el escaneo de redes de `portal_.begin()` (unos segundos) una vez se abre `PORTAL_WINDOW`, que si no se quedaria con los LEDs apagados. Mientras dura `CONNECTING` (ver `## Máquina de estados`) sigue rotando mientras se intenta conectar a la WiFi/NTP y comprobar OTA antes de abrir el portal. `updateLedForCurrentState()` lo sustituye por el patron definitivo en cuanto el portal esta listo.
 - En `PORTAL_WINDOW` el patrón depende solo de si hay alguien conectado a la red WiFi propia (`hasClient()`): `ALL` + `BLINK_SLOW` si no hay nadie, `ALL` + `SOLID` mientras haya alguien conectado.
 - Al entrar en `RUNNING` (`enterRunning()`), `ROTATE` de nuevo: reconectar la STA (si hiciera falta), sincronizar NTP y la primera consulta a Woffu pueden tardar unos segundos, y dejar los LEDs en `OFF` durante ese hueco seria indistinguible del `OFF` legítimo por estar fuera de horario/fin de semana/festivo — confusion detectada en el uso real. `handleRunning()` lo sustituye por el patrón definitivo (`OFF` si `mode == PollMode::OFF`, o el color que toque) en cuanto tiene un resultado real.
 - En `RUNNING`, `AppStateMachine::handleRunning()` distingue dos tipos de fallo con el mismo color ámbar: `SOLID` para un fallo puntual de un poll (`ledForStatus(WoffuStatus::UNKNOWN)`, se reintenta solo en el siguiente ciclo) y `BLINK_SLOW` para un fallo persistente que necesita intervención — no conectar a la WiFi configurada tras `kWifiConnectTimeoutMs` (20s desde la entrada a `RUNNING`) o que `WoffuClient::login()` confirme credenciales inválidas (`HTTP_CODE_BAD_REQUEST`/`HTTP_CODE_UNAUTHORIZED`, expuesto como `WoffuClient::credentialsInvalid()`). Ambos casos registran el motivo por Serial la primera vez que se detectan.
 - No hay brillo configurable ni compensación de intensidad por canal: los tres LEDs se controlan igual, a todo o nada.
+
+## NFC Reader
+
+Fichaje/desfichaje opcional acercando una tarjeta al lector PN532 (SPI). Módulo `src/nfc/NfcReader.{h,cpp}`, librería `adafruit/Adafruit PN532` (+ `adafruit/Adafruit BusIO`, dependencia declarada por la propia librería).
+
+- **Pines** (bus VSPI por defecto de `esp32dev`, sin colisión con los LEDs en GPIO 25/26/27): SCK=18, MISO=19, MOSI=23 (bus SPI global, compartido vía el objeto `SPI`), CS=GPIO5 (dedicado, constante `kPinNfcCs` en `AppStateMachine.cpp`). Constructor de SPI hardware de la librería (`Adafruit_PN532(ss)`), no software SPI.
+- **`NfcReader::begin(pinCs)`**: falla de forma silenciosa (loguea una vez, no bloquea el arranque) si `getFirmwareVersion()` no responde — cableado incorrecto, o módulo en modo HSU/I2C (los breakouts PN532 suelen tener un jumper/switch para elegir el modo).
+- **`NfcReader::poll(uidHexOut)`**: `readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, timeout≈50ms)` — no bloqueante de forma acotada (igual de orden de magnitud que el `kPollPeriod` de `LedController`), asumible una vez por tick de `loop()`. **Edge-triggered**: solo devuelve `true` la primera vez que detecta una tarjeta tras no haber ninguna, para que un tap se procese una sola vez mientras la tarjeta siga apoyada — con debounce de varias lecturas fallidas seguidas (3) antes de dar la tarjeta por retirada, para no confundir un fallo puntual de lectura RF con una retirada real. UID formateado a hex mayúsculas sin separadores (p.ej. `"04A1B2C3"`).
+- **Persistencia de la tarjeta aprendida**: `Config::setLearnedCardUid()`/`learnedCardUid()`/`hasLearnedCard()`, key NVS `nfc_uid` (ver `## Esquema de configuración`). Cacheada en RAM permanentemente (no "consume-al-leer" como la nota de OTA), se necesita en cada tap. `factoryReset()` también la borra.
+
+### Aprendizaje (dentro de `PORTAL_WINDOW`)
+
+Botón "Aprender tarjeta" en el portal (`POST /nfc/learn`, `ProvisioningPortal::handleNfcLearn()`) arma `pendingNfcLearn_` y responde 302 a `/`, mismo patrón que `handleOtaUpdate()`. `AppStateMachine::handlePortal()` consume esa bandera y arma `nfcLearnActive_` con un timeout de 30s (`kNfcLearnTimeoutMs`), evaluado sin bloquear en cada tick:
+
+- Mientras espera: LEDs `ALL` + `ROTATE_FAST`, página en estado `NfcLearnUiState::WAITING` (con `<meta refresh>` cada 3s, igual que `OtaUiState::UPDATING` — es, junto con ese, el único estado en el que el auto-refresco es seguro porque el usuario no debería estar a la vez editando el formulario de WiFi/Woffu de la misma página).
+- Al detectar una tarjeta: `Config::setLearnedCardUid()`, LEDs `ALL` + `BLINK_FAST` unos segundos (`kNfcLearnResultHoldMs`), página pasa a `SUCCESS` mostrando el UID enmascarado (`maskUid()`, solo los primeros/últimos 2 bytes — nunca el UID completo en claro).
+- Si no se detecta ninguna tarjeta a tiempo: página pasa a `TIMEOUT`, LEDs vuelven al patrón normal de `PORTAL_WINDOW` (`updateLedForCurrentState()`).
+
+### Fichaje/desfichaje normal (dentro de `RUNNING`, solo `PollMode::ACTIVE`)
+
+Dentro de `AppStateMachine::handleRunning()`, justo tras el `if (mode == PollMode::OFF) return;` y **antes** del throttle `nextPollAtMs_` del polling HTTP — el NFC se comprueba en cada tick de `loop()`, no cada ~60s. Solo activo en `PollMode::ACTIVE` (no en `PASSIVE` ni `OFF`): decisión de producto para no complicar la ventana pasiva (el tramo en el que Woffu ya espera que el usuario esté fichado).
+
+Secuencia por tap (mini estado `NfcSignState` en `AppStateMachine`):
+
+1. Tarjeta detectada (edge-triggered) → LEDs `ALL` + `ROTATE_FAST`, log del UID.
+2. Si el UID no coincide con `Config::learnedCardUid()`: log de mismatch, LEDs `RED` + `BLINK_FAST`.
+3. Si coincide: log de la dirección esperada (según `lastWoffuStatus_` cacheado, sin llamada de red extra solo para el log) y `WoffuClient::toggleSign()`:
+   - Éxito: LEDs `GREEN` + `BLINK_FAST`, y se fuerza `nextPollAtMs_ = millis()` para que, tras la ventana de resultado, el siguiente poll HTTP real (`fetchStatus()`) asiente el color definitivo del semáforo — nunca se asume el nuevo estado de forma optimista.
+   - Fallo: LEDs `YELLOW` + `BLINK_FAST` (distinto del rojo de "no coincide", coherente con el uso ya existente de ámbar para errores).
+4. El LED de resultado se mantiene `kNfcResultHoldMs` (~3s); mientras tanto no se vuelve a comprobar el lector. Al expirar, si el mismo UID sigue apoyado no se dispara un nuevo evento (edge-triggered): hay que retirar la tarjeta y volver a acercarla para un nuevo tap.
 
 ## CI/CD — release y publicación del firmware
 
