@@ -49,9 +49,34 @@ String minutesToHhMm(uint16_t minutes) {
 // iOS/Android al conectarse al AP (CNA / popup "Iniciar sesion en red") es un
 // WebView muy limitado: normalmente no ejecuta JavaScript y el soporte de
 // <datalist> es pobre o nulo, pero <select> es un control nativo universal.
-String scanSsidOptionsHtml(const String& currentSsid) {
+String scanSsidOptionsHtml(const String& currentSsid, const String& currentPassword) {
     constexpr int kMaxNetworks = 32;
+
+    // Si la WiFi guardada no esta al alcance (p.ej. el dispositivo viaja de
+    // casa a la oficina), la STA sigue en pleno intento de conexion: el
+    // propio core de arduino-esp32 reintenta esp_wifi_connect() casi sin
+    // pausa en cuanto detecta "red no encontrada" (WiFiGeneric.cpp,
+    // ARDUINO_EVENT_WIFI_STA_DISCONNECTED con autoReconnect activo), y
+    // esp_wifi_scan_start() falla mientras esa conexion esta en curso,
+    // devolviendo un listado vacio aunque si haya redes visibles. Se frena el
+    // auto-reintento antes de escanear (para que la STA quede libre) y se
+    // relanza despues, para no perder la posibilidad de conectar en segundo
+    // plano mientras el portal esta abierto (ver enterPortalWindow() en
+    // AppStateMachine).
+    bool wasConnected = WiFi.isConnected();
+    if (!wasConnected) {
+        WiFi.setAutoReconnect(false);
+        WiFi.disconnect();
+        delay(100);
+    }
+
     int count = WiFi.scanNetworks();
+
+    if (!wasConnected) {
+        WiFi.setAutoReconnect(true);
+        WiFi.begin(currentSsid.c_str(), currentPassword.c_str());
+    }
+
     if (count <= 0) {
         WiFi.scanDelete();
         return "";
@@ -183,7 +208,7 @@ void ProvisioningPortal::begin(const DeviceConfig& current) {
     WiFi.softAP(apSsid, apPassword);
     logPrintf("Portal WiFi: %s, password: %s (192.168.4.1)\n", apSsid, apPassword);
 
-    ssidOptionsHtml_ = scanSsidOptionsHtml(current_.wifiSsid);
+    ssidOptionsHtml_ = scanSsidOptionsHtml(current_.wifiSsid, current_.wifiPassword);
 
     dns_ = new DNSServer();
     dns_->start(kDnsPort, "*", WiFi.softAPIP());
