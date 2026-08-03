@@ -12,7 +12,6 @@
 
 enum class AppState : uint8_t {
     INIT,
-    UNCONFIGURED,
     CONNECTING,
     PORTAL_WINDOW,
     RUNNING,
@@ -24,7 +23,6 @@ public:
     void loop();
 
 private:
-    void enterUnconfigured();
     void enterConnecting();
     void enterPortalWindow();
     void enterRunning();

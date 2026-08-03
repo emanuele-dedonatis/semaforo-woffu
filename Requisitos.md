@@ -55,8 +55,9 @@ La página también muestra la versión de firmware actual (útil para comprobar
 
 ### Disponibilidad del portal
 
-- Si el dispositivo **no está configurado**: red WiFi propia (AP) siempre activa, sin límite de tiempo (no hay credenciales guardadas con las que intentar conectar a nada antes).
-- Si el dispositivo **ya está configurado**: antes de abrir el AP, intenta conectar a la WiFi guardada, sincronizar la hora y comprobar actualizaciones OTA (LEDs rotando como indicador de carga, máximo 20s de margen — ver `### Feedback visual` más abajo). Hecho eso, el AP se activa los primeros 15s tras esa espera, en espera de que alguien se conecte a esa red (fijo, no configurable). Mientras no se conecte nadie, pasados esos 15s se desactiva y el dispositivo pasa a funcionamiento normal. Si alguien se conecta, la ventana se mantiene abierta sin límite de tiempo mientras siga conectado, y se cierra en cuanto se desconecta (no hace falta esperar a que expire ningún plazo). Mientras el portal está activo, el ESP32 mantiene el AP **y** la WiFi real en paralelo (`WIFI_MODE_APSTA`) — necesario para que la comprobación/actualización OTA del propio portal tenga salida a internet, tanto en ese intento inicial como si conecta más tarde.
+- Al arrancar (esté o no configurado el dispositivo — sin credenciales guardadas el intento de conexión simplemente nunca llega a completarse), antes de abrir el AP intenta conectar a la WiFi guardada, sincronizar la hora y comprobar actualizaciones OTA (LEDs rotando como indicador de carga, máximo 20s de margen — ver `### Feedback visual` más abajo).
+- Hecho eso, el AP se activa. Si la WiFi llegó a conectar, se activa solo los primeros 15s, en espera de que alguien se conecte a esa red (fijo, no configurable); mientras no se conecte nadie, pasados esos 15s se desactiva y el dispositivo pasa a funcionamiento normal. Si alguien se conecta, la ventana se mantiene abierta sin límite de tiempo mientras siga conectado, y se cierra en cuanto se desconecta. Si la WiFi **no** llegó a conectar (no configurada, credenciales incorrectas, red no disponible...), el AP se queda activo indefinidamente sin pasar nunca a funcionamiento normal: no tendría sentido, porque ahí el dispositivo se quedaría sin WiFi y sin portal, sin ninguna forma de reconfigurarse.
+- Mientras el portal está activo, el ESP32 mantiene el AP **y** la WiFi real en paralelo (`WIFI_MODE_APSTA`) — necesario para que la comprobación/actualización OTA del propio portal tenga salida a internet, tanto en ese intento inicial como si conecta más tarde.
 - Para volver a entrar en modo configuración: apagar y reencender el dispositivo.
 
 ### Seguridad del portal
@@ -66,9 +67,9 @@ La página también muestra la versión de firmware actual (útil para comprobar
 
 ### Feedback visual (parpadeo de LEDs)
 
-Desde que se enciende el dispositivo hasta que el portal está realmente listo (esté o no configurado): los 3 LEDs van rotando, 1s cada uno, verde → amarillo → rojo → repite (indicador de "cargando"). Si ya está configurado, esta fase incluye intentar conectar a la WiFi, sincronizar la hora y comprobar OTA antes de abrir el portal (máximo 20s de margen); si no está configurado, cubre el escaneo de redes visibles para el formulario (unos segundos).
+Desde que se enciende el dispositivo hasta que el portal está realmente listo: los 3 LEDs van rotando, 1s cada uno, verde → amarillo → rojo → repite (indicador de "cargando"). Esta fase incluye intentar conectar a la WiFi, sincronizar la hora y comprobar OTA antes de abrir el portal (máximo 20s de margen).
 
-Una vez abierto el portal, aplica tanto si el dispositivo está configurado (durante los 15s de ventana) como si no (indefinidamente):
+Una vez abierto el portal, aplica tanto si la ventana es de 15s (WiFi conectada) como si es indefinida (sin WiFi):
 
 | Alguien conectado a la red propia | Patrón |
 |---|---|

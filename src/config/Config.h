@@ -10,7 +10,6 @@ struct TimeWindow {
 };
 
 struct DeviceConfig {
-    bool configured = false;
     String wifiSsid;
     String wifiPassword;
     String woffuUsername;

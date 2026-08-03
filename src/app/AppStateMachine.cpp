@@ -83,12 +83,12 @@ const char* woffuStatusName(WoffuStatus status) {
 void AppStateMachine::begin() {
     config_.begin();
     led_.begin(kPinLedRed, kPinLedYellow, kPinLedGreen);
-    // Rotando desde el primer instante, tambien en UNCONFIGURED: portal_.begin()
-    // (mas abajo, via enterUnconfigured()/enterConnecting()) incluye un escaneo
-    // de redes WiFi que ya tarda unos segundos por si solo, y sin esto los LEDs
-    // se quedarian apagados durante ese hueco en vez de mostrar que el
-    // dispositivo esta "cargando". updateLedForCurrentState() lo sustituye por
-    // el patron definitivo en cuanto el portal esta realmente listo.
+    // Rotando desde el primer instante: portal_.begin() (mas abajo, via
+    // enterPortalWindow()) incluye un escaneo de redes WiFi que ya tarda unos
+    // segundos por si solo, y sin esto los LEDs se quedarian apagados durante
+    // ese hueco en vez de mostrar que el dispositivo esta "cargando".
+    // updateLedForCurrentState() lo sustituye por el patron definitivo en
+    // cuanto el portal esta realmente listo.
     led_.set(ledRotate());
 
     otaUpdater_.setBeforeFlashCallback([this](const String& from, const String& to) {
@@ -125,22 +125,17 @@ void AppStateMachine::begin() {
         }
     }
 
-    state_ = config_.get().configured ? AppState::CONNECTING : AppState::UNCONFIGURED;
-
-    switch (state_) {
-        case AppState::UNCONFIGURED:
-            enterUnconfigured();
-            break;
-        case AppState::CONNECTING:
-            enterConnecting();
-            break;
-        default:
-            break;
-    }
+    // Se intenta conectar siempre, este o no configurado el dispositivo: sin
+    // SSID guardado, wifi_.begin() simplemente nunca llegara a conectar y
+    // handleConnecting() acabara abriendo el portal igualmente por timeout,
+    // que es exactamente el mismo desenlace que si la WiFi guardada fuera
+    // invalida. No hace falta distinguir ambos casos.
+    state_ = AppState::CONNECTING;
+    enterConnecting();
 }
 
 void AppStateMachine::loop() {
-    if (state_ == AppState::UNCONFIGURED || state_ == AppState::PORTAL_WINDOW) {
+    if (state_ == AppState::PORTAL_WINDOW) {
         handlePortal();
     }
 
@@ -174,7 +169,12 @@ void AppStateMachine::loop() {
         handleConnecting();
     }
 
-    if (state_ == AppState::PORTAL_WINDOW && !portalClientConnected_ && millis() >= portalWindowDeadlineMs_) {
+    // Si nunca se llego a conectar a la WiFi configurada, pasar a RUNNING no
+    // tiene sentido (ahi solo se acabaria parpadeando en ambar con el portal
+    // ya cerrado, sin forma de reconfigurar el dispositivo): la ventana solo
+    // se cierra sola por timeout cuando hay conexion WiFi real.
+    if (state_ == AppState::PORTAL_WINDOW && !portalClientConnected_ && wifi_.isConnected() &&
+        millis() >= portalWindowDeadlineMs_) {
         logPrintln("Ventana de portal cerrada: nadie se conecto en 15s. Pasando a modo normal.");
         enterRunning();
     }
@@ -182,12 +182,6 @@ void AppStateMachine::loop() {
     if (state_ == AppState::RUNNING) {
         handleRunning();
     }
-}
-
-void AppStateMachine::enterUnconfigured() {
-    logPrintln("Dispositivo sin configurar: portal de configuracion activo indefinidamente.");
-    portal_.begin(config_.get());
-    updateLedForCurrentState();
 }
 
 void AppStateMachine::enterConnecting() {
@@ -225,7 +219,8 @@ void AppStateMachine::enterPortalWindow() {
     // portal esta abierto, y la comprobacion/actualizacion OTA del propio
     // portal la necesita para llegar a GitHub.
     state_ = AppState::PORTAL_WINDOW;
-    logPrintln("Ventana de portal de configuracion abierta (15s, o hasta que se desconecte el cliente).");
+    logPrintln("Ventana de portal de configuracion abierta (15s si hay WiFi, o hasta que se desconecte el "
+               "cliente; indefinida mientras no haya conexion WiFi).");
     portal_.begin(config_.get());
     portalWindowDeadlineMs_ = millis() + kPortalWaitMs;
     updateLedForCurrentState();
@@ -272,8 +267,10 @@ void AppStateMachine::handlePortal() {
             logPrintln("Cliente conectado al portal de configuracion.");
         } else {
             logPrintln("Cliente desconectado del portal de configuracion.");
-            if (state_ == AppState::PORTAL_WINDOW) {
-                // Se acaba de desconectar el último cliente: cerramos ya la ventana.
+            // Solo cerramos ya la ventana si hay conexion WiFi real: pasar a RUNNING
+            // sin ella dejaria el dispositivo sin WiFi ni portal, sin forma de
+            // reconfigurarse (ver comentario en loop()).
+            if (state_ == AppState::PORTAL_WINDOW && wifi_.isConnected()) {
                 logPrintln("Ventana de portal cerrada: se desconecto el ultimo cliente. Pasando a modo normal.");
                 enterRunning();
                 return;
@@ -453,7 +450,7 @@ void AppStateMachine::saveConfigAndReboot(const DeviceConfig& newConfig) {
 }
 
 void AppStateMachine::updateLedForCurrentState() {
-    if (state_ != AppState::UNCONFIGURED && state_ != AppState::PORTAL_WINDOW) {
+    if (state_ != AppState::PORTAL_WINDOW) {
         return;
     }
     led_.set(portalClientConnected_ ? ledAllSolid() : ledSlowBlink(LedColor::ALL));

@@ -9,7 +9,6 @@ void Config::begin() {
     Preferences prefs;
     prefs.begin(kNamespace, true);
 
-    current_.configured = prefs.getBool("configured", false);
     current_.wifiSsid = prefs.getString("wifi_ssid", "");
     current_.wifiPassword = prefs.getString("wifi_pass", "");
     current_.woffuUsername = prefs.getString("woffu_user", "");
@@ -31,7 +30,6 @@ bool Config::save(const DeviceConfig& config) {
         return false;
     }
 
-    prefs.putBool("configured", true);
     prefs.putString("wifi_ssid", config.wifiSsid);
     prefs.putString("wifi_pass", config.wifiPassword);
     prefs.putString("woffu_user", config.woffuUsername);
@@ -43,7 +41,6 @@ bool Config::save(const DeviceConfig& config) {
     prefs.end();
 
     current_ = config;
-    current_.configured = true;
     return true;
 }
 
