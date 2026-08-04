@@ -15,7 +15,6 @@ void Config::begin() {
     current_.woffuPassword = prefs.getString("woffu_pass", "");
     current_.activeWindow.startMinutes = prefs.getUShort("win_s", 450);
     current_.activeWindow.endMinutes = prefs.getUShort("win_e", 1140);
-    current_.forceActiveWindow = prefs.getBool("force_active", false);
     learnedCardUid_ = prefs.getString("nfc_uid", "");
 
     current_.autoSignEnabled = prefs.getBool("as_en", false);
@@ -49,7 +48,6 @@ bool Config::save(const DeviceConfig& config) {
     prefs.putString("woffu_pass", config.woffuPassword);
     prefs.putUShort("win_s", config.activeWindow.startMinutes);
     prefs.putUShort("win_e", config.activeWindow.endMinutes);
-    prefs.putBool("force_active", config.forceActiveWindow);
 
     prefs.putBool("as_en", config.autoSignEnabled);
     for (int i = 0; i < 5; i++) {

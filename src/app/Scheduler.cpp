@@ -12,11 +12,6 @@ void Scheduler::configure(const DeviceConfig& config) {
 
 PollMode Scheduler::currentMode(uint16_t nowMinutesOfDay, const WorkdayInfo& workday, bool workdayValid,
                                  WoffuStatus lastStatus, String& reason) const {
-    if (config_.forceActiveWindow) {
-        reason = "ventana activa forzada (modo test)";
-        return PollMode::ACTIVE;
-    }
-
     const TimeWindow& window = config_.activeWindow;
     if (nowMinutesOfDay < window.startMinutes || nowMinutesOfDay >= window.endMinutes) {
         reason = "fuera de la ventana de encendido configurada";

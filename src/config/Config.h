@@ -18,7 +18,6 @@ struct DeviceConfig {
     // Scheduler decide activa/pasiva segun la jornada que reporta Woffu (ver Scheduler).
     // Por defecto 07:30-19:00.
     TimeWindow activeWindow{450, 1140};
-    bool forceActiveWindow = false;
 
     // Fichaje automatico (ver Scheduler/AppStateMachine): deshabilitado por
     // defecto. Horario esperado de entrada/salida por dia laborable (L-V),

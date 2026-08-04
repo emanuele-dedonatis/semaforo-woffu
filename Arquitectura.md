@@ -101,7 +101,6 @@ Namespace `cfg`:
 | `woffu_user` | string | |
 | `woffu_pass` | string | |
 | `win_s`/`win_e` | uint16 (minutos del día) | `450,1140` (07:30–19:00) |
-| `force_active` | bool | `false` |
 | `as_en` | bool | `false` (fichaje automático deshabilitado) |
 | `as_s0`..`as_s4`/`as_e0`..`as_e4` | uint16 (minutos del día) | horario de entrada/salida por día laborable, índice 0=lunes..4=viernes (ver `## Fichaje automático por horario`) |
 
@@ -247,12 +246,11 @@ Verificado contra la API real con `tools/toggle_sign.py` (a partir de un flujo c
 
 `Scheduler::currentMode()` decide `ACTIVE`/`PASSIVE`/`OFF` combinando, por este orden:
 
-1. `force_active` (config): si está activo, siempre `ACTIVE` — ignora la ventana de encendido y la jornada de Woffu para decidir el modo (para pruebas, sin necesidad de esperar a la franja horaria real).
-2. Ventana de encendido/apagado configurada por el usuario (`activeWindow` en `DeviceConfig`): fuera de ella, `OFF` — no se llama ni a `/diarysummaries/workday` ni a `/signs/slots`.
-3. Dentro de la ventana de encendido, con la última jornada obtenida de Woffu (`WorkdayInfo`, cacheada por `AppStateMachine` una vez al día, ver arriba): `isWeekend`/`isHoliday` → `OFF`; dentro de `startTime`-`endTime` → `PASSIVE`; fuera → `ACTIVE`.
-4. Si todavía no se ha podido obtener la jornada del día (fallo de red/API, o arranque muy reciente), se asume `ACTIVE` — opción más agresiva con la API pero que nunca deja el semáforo apagado por error; se reintenta al día siguiente (mismo criterio de "sin reintentos adicionales" que el resto del cliente Woffu).
+1. Ventana de encendido/apagado configurada por el usuario (`activeWindow` en `DeviceConfig`): fuera de ella, `OFF` — no se llama ni a `/diarysummaries/workday` ni a `/signs/slots`.
+2. Dentro de la ventana de encendido, con la última jornada obtenida de Woffu (`WorkdayInfo`, cacheada por `AppStateMachine` una vez al día, ver arriba): `isWeekend`/`isHoliday` → `OFF`; dentro de `startTime`-`endTime` → `PASSIVE`; fuera → `ACTIVE`.
+3. Si todavía no se ha podido obtener la jornada del día (fallo de red/API, o arranque muy reciente), se asume `ACTIVE` — opción más agresiva con la API pero que nunca deja el semáforo apagado por error; se reintenta al día siguiente (mismo criterio de "sin reintentos adicionales" que el resto del cliente Woffu).
 
-`AppStateMachine::refreshWorkdayInfo()` (login + `/users` + `/workday`) se dispara una vez al día tanto dentro de la ventana de encendido como, aparte, siempre que `force_active` esté activo — en este último caso el resultado no cambia el modo (que ya es `ACTIVE` por el punto 1), pero deja constancia en el log de que el flujo completo contra Woffu funciona, útil para probar sin esperar al horario real.
+`AppStateMachine::refreshWorkdayInfo()` (login + `/users` + `/workday`) se dispara una vez al día mientras se está dentro de la ventana de encendido.
 
 Cada cambio de modo (y el motivo concreto, en castellano) se registra por Serial (`AppStateMachine::handleRunning()`), igual que el resultado de cada consulta de jornada (`refreshWorkdayInfo()`). Los intervalos de poll (`kPollActiveSeconds` ~60s, `kPollPassiveSeconds` ~900s) son constantes en `Scheduler.cpp`, ya no configurables desde el portal.
 

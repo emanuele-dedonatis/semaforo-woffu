@@ -435,12 +435,10 @@ void AppStateMachine::handleRunning() {
     const DeviceConfig& cfg = config_.get();
     bool withinOnOffWindow =
         nowMinutes >= cfg.activeWindow.startMinutes && nowMinutes < cfg.activeWindow.endMinutes;
-    // Se pide la jornada del dia a Woffu (login + users + workday) una vez al dia: mientras
+    // Se pide la jornada del dia a Woffu (login + users + workday) una vez al dia, mientras
     // estamos dentro de la ventana de encendido (fuera de ella no hace falta ni saberlo, ya
-    // esta apagado), o siempre que este forzada la ventana activa (para poder probar el
-    // flujo completo sin esperar al horario real; el resultado no cambia el modo forzado,
-    // solo queda constancia en el log).
-    if ((cfg.forceActiveWindow || withinOnOffWindow) && timeinfo.tm_yday != lastWorkdayYday_) {
+    // esta apagado).
+    if (withinOnOffWindow && timeinfo.tm_yday != lastWorkdayYday_) {
         refreshWorkdayInfo(timeinfo.tm_yday);
     }
 

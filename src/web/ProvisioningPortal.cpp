@@ -207,7 +207,6 @@ select{width:100%;padding:.5em;box-sizing:border-box;font-size:1em}
 <div><label>Encendido</label><input name="win_start" type="time" value="%WIN_START%"></div>
 <div><label>Apagado</label><input name="win_end" type="time" value="%WIN_END%"></div>
 </div>
-<div class="checkbox-row"><input name="force_active" type="checkbox" id="force_active" %FORCE_ACTIVE_CHECKED%><label for="force_active">Forzar ventana activa (pruebas, ignora horario y jornada de Woffu)</label></div>
 <div class="checkbox-row"><input name="auto_sign_enabled" type="checkbox" id="auto_sign_enabled" %AUTO_SIGN_CHECKED%><label for="auto_sign_enabled">Fichaje automatico (ficha/desficha solo a la hora configurada de cada dia)</label></div>
 %AUTO_SIGN_SCHEDULE%
 <button type="submit">Guardar y reiniciar</button>
@@ -429,7 +428,6 @@ void ProvisioningPortal::handleRoot() {
     page.replace("%WOFFU_PASS%", htmlEscape(current_.woffuPassword));
     page.replace("%WIN_START%", minutesToHhMm(current_.activeWindow.startMinutes));
     page.replace("%WIN_END%", minutesToHhMm(current_.activeWindow.endMinutes));
-    page.replace("%FORCE_ACTIVE_CHECKED%", current_.forceActiveWindow ? "checked" : "");
     page.replace("%AUTO_SIGN_CHECKED%", current_.autoSignEnabled ? "checked" : "");
     page.replace("%AUTO_SIGN_SCHEDULE%", renderAutoSignScheduleHtml(current_.autoSignSchedule));
     server_->send(200, "text/html", page);
@@ -456,7 +454,6 @@ void ProvisioningPortal::handleSave() {
         return;
     }
 
-    config.forceActiveWindow = server_->hasArg("force_active");
     config.autoSignEnabled = server_->hasArg("auto_sign_enabled");
 
     pendingConfig_ = config;

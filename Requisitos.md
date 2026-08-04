@@ -75,7 +75,6 @@ Campos configurables desde el portal:
 - SSID / password del WiFi
 - Usuario / password de Woffu
 - Horario de encendido/apagado
-- Forzar ventana activa (para pruebas: ignora horario y la jornada que reporta Woffu, ver `## Esquema de configuración` en Arquitectura.md)
 - Fichaje automático (activar/desactivar) y horario de entrada/salida por cada día laborable (ver `## Fichaje automático por horario`)
 
 La página también muestra la versión de firmware actual (útil para comprobar visualmente que un OTA se aplicó).
