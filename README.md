@@ -1,6 +1,6 @@
 # Semáforo Woffu
 
-Firmware para un dispositivo ESP32 que muestra visualmente el estado de fichaje de [Woffu](https://woffu.com/) mediante un semáforo LED: 🔴 no fichado, 🟢 fichado, 🟡 estado desconocido. Opcionalmente permite fichar/desfichar acercando una tarjeta NFC (lector PN532).
+Firmware para un dispositivo ESP32 que muestra visualmente el estado de fichaje de [Woffu](https://woffu.com/) mediante un semáforo LED: 🔴 no fichado, 🟢 fichado, 🟡 estado desconocido. Opcionalmente permite fichar/desfichar acercando una tarjeta NFC (lector PN532), o automáticamente según un horario configurable por día laborable.
 
 ## Hardware
 
@@ -43,6 +43,7 @@ Los breakouts PN532 suelen tener un jumper/switch para elegir el modo (HSU/I2C/S
   - **Amarillo parpadeando** — fallo persistente que sí depende de la configuración y requiere revisarla desde el portal: no se ha podido conectar a la WiFi configurada (SSID/password incorrectos), o Woffu rechaza el usuario/password configurados.
 - Las actualizaciones OTA se comprueban solas en cuanto el dispositivo tiene WiFi y hora sincronizada (sin depender de que nadie abra la página del portal): la página muestra si el firmware está al día o si hay una versión nueva, y en ese caso ofrece un botón para instalarla. El pipeline de CI publica una nueva versión en GitHub Releases automáticamente al hacer push a `main`.
 - **Fichaje por NFC** (si hay una tarjeta aprendida, ver `## Configuración`): durante la ventana **activa** de polling (no durante la pasiva ni con el semáforo apagado), el lector NFC escucha continuamente. Al acercar una tarjeta los LEDs rotan rápido; si el UID no coincide con la aprendida, el rojo parpadea rápido unos segundos; si coincide, el verde parpadea rápido y se llama a la API de Woffu para fichar o desfichar (según el último estado conocido) — si esa llamada falla, el ámbar parpadea rápido en su lugar. Hay que retirar la tarjeta antes de que un nuevo tap se procese de nuevo.
+- **Fichaje automático por horario** (deshabilitado por defecto, ver `## Configuración`): si está activo, al llegar la hora de entrada configurada de un día laborable se ficha automáticamente (si no se estaba fichado ya), y a la de salida se desficha (si se estaba fichado) — comprobando siempre el estado real y actualizado en Woffu justo antes de fichar, para no fichar dos veces y acabar en el sentido contrario al esperado. Si Woffu marca el día como festivo o fin de semana, ese día se omite.
 
 ## Configuración
 
@@ -54,6 +55,7 @@ Al arrancar sin datos guardados (o tras un "Restablecer de fábrica"), el dispos
 - **Usuario Woffu / Password Woffu** — credenciales de la cuenta de Woffu cuyo estado de fichaje se consulta.
 - **Encendido / Apagado** — franja horaria en la que el semáforo está activo y sondea Woffu; fuera de ella los LEDs se apagan (ver `Scheduler` en [Arquitectura.md](Arquitectura.md)).
 - **Forzar ventana activa** — ignora el horario configurado y la jornada de Woffu, sondeando siempre cada 60s; pensado para pruebas.
+- **Fichaje automático** — casilla para activarlo (desactivado por defecto) y, debajo, un horario de entrada/salida por cada día laborable (lunes 08:30-16:30... viernes 08:30-14:00 por defecto). Con la casilla activa, el dispositivo ficha/desficha solo a esas horas, comprobando antes el estado real en Woffu para no fichar dos veces.
 - **Guardar y reiniciar** — persiste la configuración en NVS y reinicia en modo normal (`RUNNING`).
 - La comprobación de actualización OTA es automática (si hay conexión); si hay una versión nueva disponible aparece un botón **Actualizar** para descargarla e instalarla. Mientras se instala, la página se va recargando sola mostrando el progreso.
 - **Restablecer de fábrica** — borra la configuración guardada (incluida la tarjeta NFC aprendida) y reinicia, volviendo a abrir el portal.

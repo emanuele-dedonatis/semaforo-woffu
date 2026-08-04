@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <time.h>
 #include "config/Config.h"
 #include "app/Scheduler.h"
 #include "web/ProvisioningPortal.h"
@@ -34,6 +35,8 @@ private:
     void saveConfigAndReboot(const DeviceConfig& newConfig);
     void updateLedForCurrentState();
     void refreshWorkdayInfo(int yday);
+    void handleAutoSign(uint16_t nowMinutes, const struct tm& timeinfo);
+    void attemptAutoSign(bool isEntry);
 
     AppState state_ = AppState::INIT;
     uint32_t connectingDeadlineMs_ = 0;
@@ -73,4 +76,11 @@ private:
     enum class NfcSignState : uint8_t { IDLE, RESULT };
     NfcSignState nfcSignState_ = NfcSignState::IDLE;
     uint32_t nfcSignResultUntilMs_ = 0;
+
+    // Fichaje automatico (solo dentro de RUNNING, cualquier PollMode != OFF).
+    // Se marca el yday en cuanto se intenta la entrada/salida del dia (haya
+    // ido bien o mal), para no reintentar dentro del mismo dia (ver
+    // handleAutoSign()).
+    int lastAutoEntryYday_ = -1;
+    int lastAutoExitYday_ = -1;
 };

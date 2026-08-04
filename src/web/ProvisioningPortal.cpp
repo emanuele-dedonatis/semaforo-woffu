@@ -43,6 +43,26 @@ String minutesToHhMm(uint16_t minutes) {
     return String(buf);
 }
 
+constexpr const char* kAutoSignDayLabels[5] = {"Lunes", "Martes", "Miercoles", "Jueves", "Viernes"};
+constexpr const char* kAutoSignDayFields[5] = {"lu", "ma", "mi", "ju", "vi"};
+
+// Fila por dia laborable (L-V) con dos <input type="time">, mismo patron que
+// el par Encendido/Apagado de mas arriba. Nombres de campo fijos
+// (auto_<dia>_start/auto_<dia>_end) en vez de un indice numerico, para que
+// sean legibles al inspeccionar el formulario.
+String renderAutoSignScheduleHtml(const TimeWindow schedule[5]) {
+    String html;
+    for (int i = 0; i < 5; i++) {
+        html += "<div class=\"row\"><div><label>" + String(kAutoSignDayLabels[i]) + " entrada</label>"
+                "<input name=\"auto_" + String(kAutoSignDayFields[i]) + "_start\" type=\"time\" value=\"" +
+                minutesToHhMm(schedule[i].startMinutes) + "\"></div>"
+                "<div><label>" + String(kAutoSignDayLabels[i]) + " salida</label>"
+                "<input name=\"auto_" + String(kAutoSignDayFields[i]) + "_end\" type=\"time\" value=\"" +
+                minutesToHhMm(schedule[i].endMinutes) + "\"></div></div>";
+    }
+    return html;
+}
+
 // Escanea redes WiFi visibles y arma las <option> de un <select>, ordenadas
 // por senal (RSSI) descendente y sin SSIDs duplicados (redes con varios APs).
 // Se usa <select> en vez de <datalist> porque el navegador cautivo que abren
@@ -188,6 +208,8 @@ select{width:100%;padding:.5em;box-sizing:border-box;font-size:1em}
 <div><label>Apagado</label><input name="win_end" type="time" value="%WIN_END%"></div>
 </div>
 <div class="checkbox-row"><input name="force_active" type="checkbox" id="force_active" %FORCE_ACTIVE_CHECKED%><label for="force_active">Forzar ventana activa (pruebas, ignora horario y jornada de Woffu)</label></div>
+<div class="checkbox-row"><input name="auto_sign_enabled" type="checkbox" id="auto_sign_enabled" %AUTO_SIGN_CHECKED%><label for="auto_sign_enabled">Fichaje automatico (ficha/desficha solo a la hora configurada de cada dia)</label></div>
+%AUTO_SIGN_SCHEDULE%
 <button type="submit">Guardar y reiniciar</button>
 </form>
 <hr>
@@ -408,6 +430,8 @@ void ProvisioningPortal::handleRoot() {
     page.replace("%WIN_START%", minutesToHhMm(current_.activeWindow.startMinutes));
     page.replace("%WIN_END%", minutesToHhMm(current_.activeWindow.endMinutes));
     page.replace("%FORCE_ACTIVE_CHECKED%", current_.forceActiveWindow ? "checked" : "");
+    page.replace("%AUTO_SIGN_CHECKED%", current_.autoSignEnabled ? "checked" : "");
+    page.replace("%AUTO_SIGN_SCHEDULE%", renderAutoSignScheduleHtml(current_.autoSignSchedule));
     server_->send(200, "text/html", page);
 }
 
@@ -421,6 +445,11 @@ void ProvisioningPortal::handleSave() {
     bool ok = true;
     ok &= parseHhMm(server_->arg("win_start"), config.activeWindow.startMinutes);
     ok &= parseHhMm(server_->arg("win_end"), config.activeWindow.endMinutes);
+    for (int i = 0; i < 5; i++) {
+        String field = kAutoSignDayFields[i];
+        ok &= parseHhMm(server_->arg("auto_" + field + "_start"), config.autoSignSchedule[i].startMinutes);
+        ok &= parseHhMm(server_->arg("auto_" + field + "_end"), config.autoSignSchedule[i].endMinutes);
+    }
 
     if (!ok || config.wifiSsid.isEmpty() || config.woffuUsername.isEmpty()) {
         server_->send(400, "text/html", "<!doctype html><html><body><h1>Error</h1><p>Revisa los campos.</p></body></html>");
@@ -428,6 +457,7 @@ void ProvisioningPortal::handleSave() {
     }
 
     config.forceActiveWindow = server_->hasArg("force_active");
+    config.autoSignEnabled = server_->hasArg("auto_sign_enabled");
 
     pendingConfig_ = config;
     pendingSave_ = true;

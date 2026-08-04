@@ -18,6 +18,18 @@ void Config::begin() {
     current_.forceActiveWindow = prefs.getBool("force_active", false);
     learnedCardUid_ = prefs.getString("nfc_uid", "");
 
+    current_.autoSignEnabled = prefs.getBool("as_en", false);
+    for (int i = 0; i < 5; i++) {
+        char keyStart[8];
+        char keyEnd[8];
+        snprintf(keyStart, sizeof(keyStart), "as_s%d", i);
+        snprintf(keyEnd, sizeof(keyEnd), "as_e%d", i);
+        current_.autoSignSchedule[i].startMinutes =
+            prefs.getUShort(keyStart, current_.autoSignSchedule[i].startMinutes);
+        current_.autoSignSchedule[i].endMinutes =
+            prefs.getUShort(keyEnd, current_.autoSignSchedule[i].endMinutes);
+    }
+
     prefs.end();
 }
 
@@ -38,6 +50,16 @@ bool Config::save(const DeviceConfig& config) {
     prefs.putUShort("win_s", config.activeWindow.startMinutes);
     prefs.putUShort("win_e", config.activeWindow.endMinutes);
     prefs.putBool("force_active", config.forceActiveWindow);
+
+    prefs.putBool("as_en", config.autoSignEnabled);
+    for (int i = 0; i < 5; i++) {
+        char keyStart[8];
+        char keyEnd[8];
+        snprintf(keyStart, sizeof(keyStart), "as_s%d", i);
+        snprintf(keyEnd, sizeof(keyEnd), "as_e%d", i);
+        prefs.putUShort(keyStart, config.autoSignSchedule[i].startMinutes);
+        prefs.putUShort(keyEnd, config.autoSignSchedule[i].endMinutes);
+    }
 
     prefs.end();
 

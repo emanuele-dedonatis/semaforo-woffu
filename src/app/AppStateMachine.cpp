@@ -458,6 +458,12 @@ void AppStateMachine::handleRunning() {
         return;
     }
 
+    // Fichaje automatico: se comprueba en cada tick (independiente del
+    // throttle de polling HTTP de mas abajo), igual que el NFC, para no
+    // esperar hasta el siguiente poll programado (hasta 15 min en ventana
+    // pasiva) para reaccionar a la hora configurada de entrada/salida.
+    handleAutoSign(nowMinutes, timeinfo);
+
     // NFC: escucha continuamente en cada tick, independiente del throttle de
     // polling HTTP de mas abajo, y solo dentro de PollMode::ACTIVE (fuera del
     // tramo de "ventana pasiva" que reporta Woffu).
@@ -534,6 +540,79 @@ void AppStateMachine::refreshWorkdayInfo(int yday) {
         logPrintln(
             "Woffu: no se pudo obtener la jornada de hoy; se usara polling activo por defecto hasta manana.");
     }
+}
+
+void AppStateMachine::handleAutoSign(uint16_t nowMinutes, const struct tm& timeinfo) {
+    const DeviceConfig& cfg = config_.get();
+    if (!cfg.autoSignEnabled) {
+        return;
+    }
+
+    // tm_wday: 0=domingo..6=sabado. Solo aplica de lunes(1) a viernes(5); el
+    // horario configurado no cubre fin de semana.
+    int wday = timeinfo.tm_wday;
+    if (wday < 1 || wday > 5) {
+        return;
+    }
+    const TimeWindow& schedule = cfg.autoSignSchedule[wday - 1];
+
+    // isWeekend es redundante con el check de tm_wday de arriba (mismo
+    // calendario), pero isHoliday no lo es: un festivo entre semana no debe
+    // disparar el fichaje automatico. Si todavia no hay jornada valida (fallo
+    // de red, arranque reciente) se deja pasar de todas formas, mismo
+    // criterio "agresivo pero seguro" que el resto del Scheduler.
+    bool isHolidayToday = workdayValid_ && (workdayInfo_.isWeekend || workdayInfo_.isHoliday);
+
+    if (nowMinutes >= schedule.startMinutes && lastAutoEntryYday_ != timeinfo.tm_yday) {
+        lastAutoEntryYday_ = timeinfo.tm_yday;
+        if (isHolidayToday) {
+            logPrintln("Fichaje automatico: hoy es festivo/fin de semana segun Woffu, se omite la entrada.");
+        } else {
+            attemptAutoSign(true);
+        }
+    }
+
+    if (nowMinutes >= schedule.endMinutes && lastAutoExitYday_ != timeinfo.tm_yday) {
+        lastAutoExitYday_ = timeinfo.tm_yday;
+        if (isHolidayToday) {
+            logPrintln("Fichaje automatico: hoy es festivo/fin de semana segun Woffu, se omite la salida.");
+        } else {
+            attemptAutoSign(false);
+        }
+    }
+}
+
+void AppStateMachine::attemptAutoSign(bool isEntry) {
+    const char* label = isEntry ? "entrada" : "salida";
+    logPrintf("Fichaje automatico: hora de %s alcanzada, comprobando estado actual en Woffu...\n", label);
+
+    // Se pide el estado real (en vez de fiarse de lastWoffuStatus_, que puede
+    // llevar hasta 15 min desactualizado en ventana pasiva) justo antes de
+    // decidir: como fichar/desfichar es la misma llamada, fiarse de un estado
+    // obsoleto podria disparar la accion contraria a la deseada.
+    WoffuStatus status = woffuClient_.fetchStatus();
+    lastWoffuStatus_ = status;
+    logPrintf("Estado Woffu: %s\n", woffuStatusName(status));
+
+    if (status == WoffuStatus::UNKNOWN) {
+        logPrintln("Fichaje automatico: no se pudo confirmar el estado actual en Woffu, se omite por seguridad.");
+        return;
+    }
+
+    bool shouldSign = isEntry ? (status == WoffuStatus::CLOCKED_OUT) : (status == WoffuStatus::CLOCKED_IN);
+    if (!shouldSign) {
+        logPrintf("Fichaje automatico: ya estaba fichada la %s, no se hace nada.\n", label);
+        return;
+    }
+
+    if (woffuClient_.toggleSign()) {
+        logPrintf("Woffu API: fichaje automatico de %s registrado.\n", label);
+    } else {
+        logPrintf("Woffu API: error al registrar el fichaje automatico de %s.\n", label);
+    }
+    // Fuerza un repoll real inmediato para que el LED refleje el resultado
+    // (exito o fallo) sin esperar al siguiente ciclo de polling normal.
+    nextPollAtMs_ = millis();
 }
 
 void AppStateMachine::saveConfigAndReboot(const DeviceConfig& newConfig) {

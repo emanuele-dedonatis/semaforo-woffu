@@ -102,6 +102,8 @@ Namespace `cfg`:
 | `woffu_pass` | string | |
 | `win_s`/`win_e` | uint16 (minutos del día) | `450,1140` (07:30–19:00) |
 | `force_active` | bool | `false` |
+| `as_en` | bool | `false` (fichaje automático deshabilitado) |
+| `as_s0`..`as_s4`/`as_e0`..`as_e4` | uint16 (minutos del día) | horario de entrada/salida por día laborable, índice 0=lunes..4=viernes (ver `## Fichaje automático por horario`) |
 
 Los ritmos de polling (activo ~60s, pasivo ~900s) ya no son configurables: son constantes fijas en `Scheduler.cpp` (ver `## Cliente Woffu` y `## Scheduler`). El brillo tampoco: los LEDs son GPIO digital on/off, siempre al máximo, ver `## LED Controller`.
 
@@ -335,6 +337,22 @@ Secuencia por tap (mini estado `NfcSignState` en `AppStateMachine`):
    - Éxito: LEDs `GREEN` + `BLINK_FAST`, y se fuerza `nextPollAtMs_ = millis()` para que, tras la ventana de resultado, el siguiente poll HTTP real (`fetchStatus()`) asiente el color definitivo del semáforo — nunca se asume el nuevo estado de forma optimista.
    - Fallo: LEDs `YELLOW` + `BLINK_FAST` (distinto del rojo de "no coincide", coherente con el uso ya existente de ámbar para errores).
 4. El LED de resultado se mantiene `kNfcResultHoldMs` (~3s); mientras tanto no se vuelve a comprobar el lector. Al expirar, si el mismo UID sigue apoyado no se dispara un nuevo evento (edge-triggered): hay que retirar la tarjeta y volver a acercarla para un nuevo tap.
+
+## Fichaje automático por horario
+
+Alternativa al fichaje por NFC para quien no tiene lector: en vez de una tarjeta, dispara `WoffuClient::toggleSign()` según un horario de entrada/salida por día laborable configurado en el portal (`DeviceConfig::autoSignSchedule[5]`, índice 0=lunes..4=viernes, ver `## Esquema de configuración`). Vive entero en `AppStateMachine` (`handleAutoSign()`/`attemptAutoSign()`), sin módulo propio — mismo criterio que el fichaje por NFC, que tampoco separa esta orquestación en una clase aparte.
+
+- **Dónde se comprueba**: dentro de `handleRunning()`, justo después del `if (mode == PollMode::OFF) return;` y antes del bloque de NFC — en cada tick de `loop()` (no throttleado al ciclo de polling HTTP), para no esperar hasta 15 min (ventana pasiva) a reaccionar a la hora configurada. Corre en cualquier `PollMode` distinto de `OFF` (`ACTIVE` o `PASSIVE`): fuera de la ventana de encendido no hay llamadas a la API, igual que el resto del firmware.
+- **Condición para disparar un evento** (entrada o salida): `cfg.autoSignEnabled` activo, día de la semana lunes-viernes (`tm_wday` 1-5), hora actual (`nowMinutes`) ya alcanzó la hora configurada para ese evento ese día, y no se ha intentado ya ese mismo evento hoy (`lastAutoEntryYday_`/`lastAutoExitYday_`, comparados contra `tm_yday` — mismo patrón que `lastWorkdayYday_` de `refreshWorkdayInfo()`). Se marca el `yday` como "intentado" **antes** de decidir si se ficha o se omite (festivo, fallo al confirmar estado...), para no reintentar dentro del mismo día bajo ningún desenlace — mismo criterio de "sin reintentos adicionales" que el resto del cliente Woffu.
+- **Festivos/fin de semana**: si `workdayValid_` y Woffu reportó `isWeekend`/`isHoliday` para hoy (mismo `WorkdayInfo` cacheado una vez al día por `refreshWorkdayInfo()`, ver `## Scheduler`), se omite el evento sin llamar a la API. Si todavía no hay jornada válida (fallo de red, arranque muy reciente), se deja pasar de todas formas — mismo criterio "agresivo pero seguro" que `Scheduler::currentMode()`.
+- **Evitar fichar dos veces en el sentido equivocado**: como `toggleSign()` es la misma llamada para fichar y desfichar (ver `## Cliente Woffu`), `attemptAutoSign()` nunca se fía de `lastWoffuStatus_` cacheado (puede llevar hasta 15 min desactualizado en ventana pasiva) — pide el estado real con `woffuClient_.fetchStatus()` justo antes de decidir. Solo llama a `toggleSign()` si el estado confirmado es el contrario al deseado (`CLOCKED_OUT` para el evento de entrada, `CLOCKED_IN` para el de salida); si ya está en el estado deseado, no hace nada. Si `fetchStatus()` devuelve `UNKNOWN` (fallo puntual), se omite el fichaje por seguridad en vez de arriesgarse a ficharlo en el sentido equivocado.
+- Tras un intento (éxito o fallo), se fuerza `nextPollAtMs_ = millis()` para que el siguiente poll HTTP normal (`fetchStatus()` de `handleRunning()`) refresque el LED con el resultado real sin esperar al ciclo programado — mismo patrón que usa el fichaje por NFC tras un tap.
+- Todo el flujo (hora alcanzada, estado comprobado, fichado/omitido, éxito/error) se registra por Serial.
+- Compatible a la vez con el fichaje por NFC: ambos llaman al mismo `WoffuClient::toggleSign()`, sin coordinación especial entre ellos más allá de que cada uno comprueba el estado real antes de actuar.
+
+### Portal — horario por día laborable
+
+`GET /` añade, dentro del mismo `<form>` de `/save`, una casilla `auto_sign_enabled` y 5 filas (una por día laborable, `renderAutoSignScheduleHtml()`) con dos `<input type="time">` cada una (`auto_<día>_start`/`auto_<día>_end`, con `<día>` = `lu`/`ma`/`mi`/`ju`/`vi`) — mismo patrón de controles nativos que el resto del formulario, sin JavaScript. `POST /save` (`handleSave()`) valida los 10 campos con el mismo `parseHhMm()` que ya usa el par Encendido/Apagado; un fallo de parseo en cualquiera de ellos devuelve el mismo error 400 genérico que el resto de campos inválidos.
 
 ## CI/CD — release y publicación del firmware
 

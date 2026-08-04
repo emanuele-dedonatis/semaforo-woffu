@@ -19,6 +19,18 @@ struct DeviceConfig {
     // Por defecto 07:30-19:00.
     TimeWindow activeWindow{450, 1140};
     bool forceActiveWindow = false;
+
+    // Fichaje automatico (ver Scheduler/AppStateMachine): deshabilitado por
+    // defecto. Horario esperado de entrada/salida por dia laborable (L-V),
+    // indice 0=Lunes .. 4=Viernes. Por defecto L-J 08:30-16:30, V 08:30-14:00.
+    bool autoSignEnabled = false;
+    TimeWindow autoSignSchedule[5] = {
+        TimeWindow(510, 990),  // Lunes
+        TimeWindow(510, 990),  // Martes
+        TimeWindow(510, 990),  // Miercoles
+        TimeWindow(510, 990),  // Jueves
+        TimeWindow(510, 840),  // Viernes
+    };
 };
 
 class Config {

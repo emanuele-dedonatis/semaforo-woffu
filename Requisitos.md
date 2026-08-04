@@ -35,6 +35,20 @@ Compatible con cualquier placa ESP32 que tenga WiFi (el provisioning y el OTA so
 - Sin lector conectado (o si no se detecta al arrancar), el dispositivo sigue funcionando con normalidad, simplemente sin esta feature.
 - Restablecer de fábrica también borra la tarjeta aprendida.
 
+## Fichaje automático por horario (opcional)
+
+- **Deshabilitado por defecto**, activable desde el portal de configuración con una casilla ("Fichaje automático").
+- El usuario configura, para cada día laborable (lunes a viernes), una hora de entrada y una de salida. Por defecto:
+  - Lunes a jueves: 08:30–16:30.
+  - Viernes: 08:30–14:00.
+- Cuando está habilitado, al llegar la hora de entrada configurada de un día laborable, si el usuario **no** está fichado, el dispositivo llama a la API de fichaje de Woffu para fichar la entrada. Al llegar la hora de salida, si **está** fichado, llama a la misma API para fichar la salida.
+- Como fichar y desfichar es la **misma llamada** a la API (Woffu decide la dirección según el último estado registrado, ver `## Fichaje por NFC`), antes de llamar se comprueba el estado real y actualizado del usuario en Woffu — nunca se asume un estado cacheado que pudiera estar desactualizado — para no fichar dos veces y obtener el resultado contrario al esperado.
+- Si por algún fallo no se puede confirmar el estado actual en Woffu en ese momento, no se ficha (se prioriza no fichar en el sentido equivocado sobre intentarlo a ciegas); no hay reintento hasta el mismo evento (entrada/salida) del día siguiente.
+- Si Woffu indica que el día es fin de semana o festivo, se omite tanto la entrada como la salida automáticas de ese día, aunque el día de la semana coincida con uno configurado.
+- Cada intento de entrada/salida se dispara como mucho una vez por día (no se repite si el dispositivo sigue encendido pasada la hora configurada).
+- Todas las decisiones y llamadas se registran por el puerto serie.
+- Esta comprobación es independiente del fichaje por NFC (`## Fichaje por NFC`): ambas pueden estar activas a la vez.
+
 ## Funcionalidades futuras
 
 - Fichaje automático adicional (p.ej. detectando conexión bluetooth del móvil o del portátil).
@@ -62,6 +76,7 @@ Campos configurables desde el portal:
 - Usuario / password de Woffu
 - Horario de encendido/apagado
 - Forzar ventana activa (para pruebas: ignora horario y la jornada que reporta Woffu, ver `## Esquema de configuración` en Arquitectura.md)
+- Fichaje automático (activar/desactivar) y horario de entrada/salida por cada día laborable (ver `## Fichaje automático por horario`)
 
 La página también muestra la versión de firmware actual (útil para comprobar visualmente que un OTA se aplicó).
 
