@@ -37,12 +37,12 @@ Los breakouts PN532 suelen tener un jumper/switch para elegir el modo (HSU/I2C/S
 ## Funcionamiento
 
 - **En cada arranque** (esté o no configurado el dispositivo): antes de abrir el portal intenta conectar a la WiFi guardada, sincronizar la hora y comprobar actualizaciones OTA (LEDs rotando verde→amarillo→rojo cada 1s mientras tanto, como indicador de "cargando"; hasta 20s de margen, o menos si todo va bien). Hecho eso (o agotado el margen), entra en `PORTAL_WINDOW`: si la WiFi llegó a conectar, dura 30s (o hasta que se desconecte el cliente) antes de pasar a modo normal, para poder reconfigurar o comprobar/instalar actualizaciones OTA sin necesidad de resetear de fábrica; si no llegó a conectar (primer arranque, tras un "Restablecer de fábrica", o credenciales incorrectas), el portal se queda abierto indefinidamente, porque no tiene sentido pasar a modo normal sin WiFi ni portal.
-- **Modo normal (`RUNNING`)**: el portal se apaga, se conecta a la WiFi configurada, se sincroniza la hora (NTP + zona horaria por geolocalización IP) y arranca el sondeo a Woffu (LEDs rotando verde→amarillo→rojo mientras tanto, para no confundir esa espera con estar apagado por horario). El `Scheduler` decide el ritmo según la hora y la jornada que reporta Woffu: **off** (LEDs apagados) fuera del horario configurado o en fin de semana/festivo, **pasiva** (cada 15 min) durante la ventana de fichaje de la jornada, y **activa** (cada 60s) el resto del tiempo dentro del horario, para detectar el fichaje/desfichaje con poca latencia.
+- **Modo normal (`RUNNING`)**: el portal se apaga, se conecta a la WiFi configurada, se sincroniza la hora (NTP + zona horaria por geolocalización IP) y arranca el sondeo a Woffu (LEDs rotando verde→amarillo→rojo mientras tanto, para no confundir esa espera con estar apagado por horario). El `Scheduler` decide si el dispositivo está encendido: **off** (LEDs apagados) fuera del horario configurado o en fin de semana/festivo según Woffu, **activo** (sondeo cada 60s) el resto del tiempo dentro del horario configurado.
 - El estado que devuelve Woffu se traduce directamente a color: 🔴 no fichado, 🟢 fichado, 🟡 desconocido (fallo de red o de la API, sin reintentos adicionales — se reintenta en el siguiente ciclo de polling). El amarillo tiene dos variantes según si el fallo depende o no de la configuración introducida por el usuario:
   - **Amarillo fijo** — fallo puntual que no depende de la configuración (Woffu caído, error de red transitorio, etc.): se reintenta solo, sin más acción por parte del usuario.
   - **Amarillo parpadeando** — fallo persistente que sí depende de la configuración y requiere revisarla desde el portal: no se ha podido conectar a la WiFi configurada (SSID/password incorrectos), o Woffu rechaza el usuario/password configurados.
 - Las actualizaciones OTA se comprueban solas en cuanto el dispositivo tiene WiFi y hora sincronizada (sin depender de que nadie abra la página del portal): la página muestra si el firmware está al día o si hay una versión nueva, y en ese caso ofrece un botón para instalarla. El pipeline de CI publica una nueva versión en GitHub Releases automáticamente al hacer push a `main`.
-- **Fichaje por NFC** (si hay una tarjeta aprendida, ver `## Configuración`): durante la ventana **activa** de polling (no durante la pasiva ni con el semáforo apagado), el lector NFC escucha continuamente. Al acercar una tarjeta los LEDs rotan rápido; si el UID no coincide con la aprendida, el rojo parpadea rápido unos segundos; si coincide, el verde parpadea rápido y se llama a la API de Woffu para fichar o desfichar (según el último estado conocido) — si esa llamada falla, el ámbar parpadea rápido en su lugar. Hay que retirar la tarjeta antes de que un nuevo tap se procese de nuevo.
+- **Fichaje por NFC** (si hay una tarjeta aprendida, ver `## Configuración`): mientras el dispositivo está encendido (no con el semáforo apagado), el lector NFC escucha continuamente. Al acercar una tarjeta los LEDs rotan rápido; si el UID no coincide con la aprendida, el rojo parpadea rápido unos segundos; si coincide, el verde parpadea rápido y se llama a la API de Woffu para fichar o desfichar (según el último estado conocido) — si esa llamada falla, el ámbar parpadea rápido en su lugar. Hay que retirar la tarjeta antes de que un nuevo tap se procese de nuevo.
 - **Fichaje automático por horario** (deshabilitado por defecto, ver `## Configuración`): si está activo, al llegar la hora de entrada configurada de un día laborable se ficha automáticamente (si no se estaba fichado ya), y a la de salida se desficha (si se estaba fichado) — comprobando siempre el estado real y actualizado en Woffu justo antes de fichar, para no fichar dos veces y acabar en el sentido contrario al esperado. Si Woffu marca el día como festivo o fin de semana, ese día se omite.
 
 ## Configuración
@@ -92,11 +92,11 @@ Primer arranque: se abre el portal de configuración, se detecta la zona horaria
 [08:40:09] Woffu API: POST https://app.woffu.com/api/svc/accounts/authorization/token -> 200
 [08:40:11] Woffu API: GET https://app.woffu.com/api/users -> 200
 [08:40:13] Woffu API: GET https://app.woffu.com/api/svc/core/users/1234567/diarysummaries/workday -> 200
-[08:40:13] Woffu: jornada de hoy - ventana pasiva 09:00-14:00, fin de semana=si, festivo=no.
+[08:40:13] Woffu: jornada de hoy - fin de semana=si, festivo=no.
 [08:40:13] Cambio de ventana de polling: off (hoy es fin de semana segun Woffu)
 ```
 
-Día laborable normal: el dispositivo arranca ya en modo `RUNNING`, sondea Woffu a la espera del fichaje (ventana activa, cada 60s), lo detecta, y pasa a sondear más despacio (ventana pasiva, cada 15 min) mientras dura la jornada según Woffu.
+Día laborable normal: el dispositivo arranca ya en modo `RUNNING` y sondea Woffu cada minuto mientras está dentro del horario configurado, hasta detectar el fichaje/desfichaje.
 
 ```
 [+0s] Semaforo Woffu - firmware 1.1.3-dev.9f12992
@@ -104,20 +104,14 @@ Día laborable normal: el dispositivo arranca ya en modo `RUNNING`, sondea Woffu
 [07:30:04] Woffu API: POST https://app.woffu.com/api/svc/accounts/authorization/token -> 200
 [07:30:06] Woffu API: GET https://app.woffu.com/api/users -> 200
 [07:30:08] Woffu API: GET https://app.woffu.com/api/svc/core/users/1234567/diarysummaries/workday -> 200
-[07:30:08] Woffu: jornada de hoy - ventana pasiva 09:00-18:00, fin de semana=no, festivo=no.
-[07:30:08] Cambio de ventana de polling: activa (fuera de la ventana pasiva de fichaje de Woffu)
+[07:30:08] Woffu: jornada de hoy - fin de semana=no, festivo=no.
+[07:30:08] Cambio de ventana de polling: activo (dentro de la ventana de encendido configurada)
 [07:30:08] Woffu API: GET https://app.woffu.com/api/svc/signs/v2/signs/slots -> 200
 [07:30:08] Estado Woffu: NO FICHADO (rojo)
 ...
 [08:57:12] Woffu API: GET https://app.woffu.com/api/svc/signs/v2/signs/slots -> 200
 [08:57:12] Estado Woffu: FICHADO (verde)
-[09:00:08] Cambio de ventana de polling: pasiva (dentro de la ventana pasiva de fichaje de Woffu)
-[09:00:08] Woffu API: GET https://app.woffu.com/api/svc/signs/v2/signs/slots -> 200
-[09:00:08] Estado Woffu: FICHADO (verde)
-[09:15:08] Woffu API: GET https://app.woffu.com/api/svc/signs/v2/signs/slots -> 200
-[09:15:08] Estado Woffu: FICHADO (verde)
 ...
-[18:00:08] Cambio de ventana de polling: activa (fuera de la ventana pasiva de fichaje de Woffu)
 [18:00:08] Woffu API: GET https://app.woffu.com/api/svc/signs/v2/signs/slots -> 200
 [18:00:08] Estado Woffu: FICHADO (verde)
 [18:03:41] Woffu API: GET https://app.woffu.com/api/svc/signs/v2/signs/slots -> 200

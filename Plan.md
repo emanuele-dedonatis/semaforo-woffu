@@ -13,7 +13,7 @@ Pensado para poder arrancar cada paso en una conversación nueva: basta con leer
 - `TimeSync` — NTP vía `configTzTime` con la zona horaria configurada.
 - `ProvisioningPortal` — portal cautivo WiFi (AP + DNS + formulario HTML), sustituyendo el diseño original por BLE (ver "Decisión revisada" en Arquitectura.md).
 - `AppStateMachine` — máquina de estados completa: `CONNECTING` (intenta WiFi/NTP/OTA antes de abrir el portal) / `PORTAL_WINDOW` (ventana de 30s / hasta desconexión si la WiFi conectó, indefinida si no, LEDs parpadeando o fijos según haya alguien conectado, guardado + reboot) y `RUNNING` (arranca WiFi STA, corre `Scheduler` + `WoffuClient` en cada tick, mapea `WoffuStatus` a color de LED, apaga LEDs fuera de ventana/fin de semana).
-- `Scheduler` — lógica pura (sin hardware) de ventanas activa/pasiva/off según hora del día e `isoWeekday`, devolviendo el intervalo de poll aplicable.
+- `Scheduler` — lógica pura (sin hardware) de encendido/apagado según hora del día y la jornada (fin de semana/festivo) que reporta Woffu.
 - `WoffuClient` — login + consulta de estado de fichaje contra la API real, token cacheado en RAM, interpretación del array de `slots`, reintento único de login ante 401.
 - `CertBundle` (`src/net/CertBundle.{h,cpp}`) + `data/cert/x509_crt_bundle.bin` — certificate bundle de Mozilla vendorizado y embebido, compartido por `WoffuClient` y `OtaUpdater` (ver Arquitectura.md, `## Certificate bundle (TLS)`).
 - `OtaUpdater` — `checkAndUpdate()` real: descarga `version.txt`, compara con `FIRMWARE_VERSION` (build flag embebido en release), y si difiere descarga `firmware.bin` vía `HTTPUpdate` desde GitHub Releases.

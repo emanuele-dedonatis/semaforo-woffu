@@ -15,8 +15,8 @@ struct DeviceConfig {
     String woffuUsername;
     String woffuPassword;
     // Ventana de encendido/apagado configurada por el usuario; dentro de ella el
-    // Scheduler decide activa/pasiva segun la jornada que reporta Woffu (ver Scheduler).
-    // Por defecto 07:30-19:00.
+    // dispositivo sondea Woffu cada minuto, salvo que Woffu marque el dia como
+    // fin de semana o festivo (ver Scheduler). Por defecto 07:30-19:00.
     TimeWindow activeWindow{450, 1140};
 
     // Fichaje automatico (ver Scheduler/AppStateMachine): deshabilitado por

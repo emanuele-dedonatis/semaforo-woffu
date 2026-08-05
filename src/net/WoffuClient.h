@@ -6,8 +6,6 @@
 enum class WoffuStatus : uint8_t { UNKNOWN, CLOCKED_IN, CLOCKED_OUT };
 
 struct WorkdayInfo {
-    uint16_t startMinutes = 0;
-    uint16_t endMinutes = 0;
     bool isWeekend = false;
     bool isHoliday = false;
 };

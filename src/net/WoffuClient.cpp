@@ -51,20 +51,6 @@ String urlEncode(const String& value) {
     }
     return encoded;
 }
-
-// Convierte "HH:MM:SS" a minutos del dia. Devuelve false si el formato no es valido.
-bool parseHhMmSs(const String& value, uint16_t& outMinutes) {
-    if (value.length() < 5) {
-        return false;
-    }
-    int hh = value.substring(0, 2).toInt();
-    int mm = value.substring(3, 5).toInt();
-    if (hh < 0 || hh > 23 || mm < 0 || mm > 59) {
-        return false;
-    }
-    outMinutes = static_cast<uint16_t>(hh * 60 + mm);
-    return true;
-}
 }  // namespace
 
 void WoffuClient::begin(const String& username, const String& password) {
@@ -256,19 +242,6 @@ bool WoffuClient::fetchWorkday(WorkdayInfo& out) {
 
     out.isWeekend = doc["isWeekend"] | false;
     out.isHoliday = doc["isHoliday"] | false;
-
-    const char* startTime = doc["startTime"] | "";
-    const char* endTime = doc["endTime"] | "";
-    bool timesOk = parseHhMmSs(startTime, out.startMinutes) && parseHhMmSs(endTime, out.endMinutes);
-    if (!timesOk) {
-        out.startMinutes = 0;
-        out.endMinutes = 0;
-        // En fin de semana/festivo Woffu puede no devolver horario, no hace falta para decidir OFF.
-        if (!out.isWeekend && !out.isHoliday) {
-            logPrintln("Woffu API: la respuesta de workday no incluye startTime/endTime validos");
-            return false;
-        }
-    }
 
     return true;
 }

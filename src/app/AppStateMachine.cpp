@@ -17,6 +17,7 @@ constexpr uint32_t kConnectingTimeoutMs = 20000; // tiempo maximo en CONNECTING 
 constexpr uint32_t kNfcLearnTimeoutMs = 30000; // tiempo maximo esperando una tarjeta durante el aprendizaje
 constexpr uint32_t kNfcLearnResultHoldMs = 3000; // cuanto se mantiene el "parpadeo ALL" tras aprender una tarjeta
 constexpr uint32_t kNfcResultHoldMs = 3000; // cuanto se mantiene el rojo/verde/ambar tras un tap en RUNNING
+constexpr uint32_t kPollIntervalMs = 60000; // ritmo fijo de sondeo a Woffu mientras el dispositivo esta activo
 
 LedCommand ledSlowBlink(LedColor color) {
     LedCommand cmd;
@@ -78,9 +79,7 @@ LedCommand ledForStatus(WoffuStatus status) {
 const char* pollModeName(PollMode mode) {
     switch (mode) {
         case PollMode::ACTIVE:
-            return "activa";
-        case PollMode::PASSIVE:
-            return "pasiva";
+            return "activo";
         default:
             return "off";
     }
@@ -443,7 +442,7 @@ void AppStateMachine::handleRunning() {
     }
 
     String reason;
-    PollMode mode = scheduler_.currentMode(nowMinutes, workdayInfo_, workdayValid_, lastWoffuStatus_, reason);
+    PollMode mode = scheduler_.currentMode(nowMinutes, workdayInfo_, workdayValid_, reason);
     if (!runningPollModeKnown_ || mode != runningPollMode_) {
         runningPollMode_ = mode;
         runningPollModeKnown_ = true;
@@ -458,56 +457,54 @@ void AppStateMachine::handleRunning() {
 
     // Fichaje automatico: se comprueba en cada tick (independiente del
     // throttle de polling HTTP de mas abajo), igual que el NFC, para no
-    // esperar hasta el siguiente poll programado (hasta 15 min en ventana
-    // pasiva) para reaccionar a la hora configurada de entrada/salida.
+    // esperar hasta el siguiente poll programado para reaccionar a la hora
+    // configurada de entrada/salida.
     handleAutoSign(nowMinutes, timeinfo);
 
     // NFC: escucha continuamente en cada tick, independiente del throttle de
-    // polling HTTP de mas abajo, y solo dentro de PollMode::ACTIVE (fuera del
-    // tramo de "ventana pasiva" que reporta Woffu).
-    if (mode == PollMode::ACTIVE) {
-        if (nfcSignState_ == NfcSignState::RESULT) {
-            if (millis() < nfcSignResultUntilMs_) {
-                return;  // se sigue mostrando el resultado, no lo pisa el color normal de abajo
-            }
-            nfcSignState_ = NfcSignState::IDLE;
+    // polling HTTP de mas abajo, mientras el dispositivo esta encendido
+    // (unico PollMode distinto de OFF, ver arriba).
+    if (nfcSignState_ == NfcSignState::RESULT) {
+        if (millis() < nfcSignResultUntilMs_) {
+            return;  // se sigue mostrando el resultado, no lo pisa el color normal de abajo
         }
+        nfcSignState_ = NfcSignState::IDLE;
+    }
 
-        String uid;
-        if (nfcReader_.poll(uid)) {
-            logPrintf("NFC: tarjeta detectada (UID %s).\n", uid.c_str());
-            led_.set(ledRotateFast());
+    String uid;
+    if (nfcReader_.poll(uid)) {
+        logPrintf("NFC: tarjeta detectada (UID %s).\n", uid.c_str());
+        led_.set(ledRotateFast());
 
-            if (config_.hasLearnedCard() && uid == config_.learnedCardUid()) {
-                const char* accion = (lastWoffuStatus_ == WoffuStatus::CLOCKED_IN) ? "salida" : "entrada";
-                logPrintf("NFC: UID coincide con la tarjeta aprendida. Fichando %s...\n", accion);
-                if (woffuClient_.toggleSign()) {
-                    logPrintf("Woffu API: fichaje de %s registrado por NFC.\n", accion);
-                    led_.set(ledFastBlink(LedColor::GREEN));
-                } else {
-                    logPrintln("Woffu API: error al registrar el fichaje por NFC.");
-                    led_.set(ledFastBlink(LedColor::YELLOW));
-                }
+        if (config_.hasLearnedCard() && uid == config_.learnedCardUid()) {
+            const char* accion = (lastWoffuStatus_ == WoffuStatus::CLOCKED_IN) ? "salida" : "entrada";
+            logPrintf("NFC: UID coincide con la tarjeta aprendida. Fichando %s...\n", accion);
+            if (woffuClient_.toggleSign()) {
+                logPrintf("Woffu API: fichaje de %s registrado por NFC.\n", accion);
+                led_.set(ledFastBlink(LedColor::GREEN));
             } else {
-                logPrintln("NFC: UID no coincide con la tarjeta aprendida.");
-                led_.set(ledFastBlink(LedColor::RED));
+                logPrintln("Woffu API: error al registrar el fichaje por NFC.");
+                led_.set(ledFastBlink(LedColor::YELLOW));
             }
-
-            // Fuerza un repoll real justo despues de la ventana de resultado (en
-            // vez de esperar al siguiente ciclo normal, que puede tardar hasta
-            // ~60s): sin esto el LED se quedaba parpadeando indefinidamente tras
-            // un mismatch en vez de volver a mostrar el estado real de Woffu.
-            nextPollAtMs_ = millis();
-            nfcSignState_ = NfcSignState::RESULT;
-            nfcSignResultUntilMs_ = millis() + kNfcResultHoldMs;
-            return;
+        } else {
+            logPrintln("NFC: UID no coincide con la tarjeta aprendida.");
+            led_.set(ledFastBlink(LedColor::RED));
         }
+
+        // Fuerza un repoll real justo despues de la ventana de resultado (en
+        // vez de esperar al siguiente ciclo normal, que puede tardar hasta
+        // ~60s): sin esto el LED se quedaba parpadeando indefinidamente tras
+        // un mismatch en vez de volver a mostrar el estado real de Woffu.
+        nextPollAtMs_ = millis();
+        nfcSignState_ = NfcSignState::RESULT;
+        nfcSignResultUntilMs_ = millis() + kNfcResultHoldMs;
+        return;
     }
 
     if (millis() < nextPollAtMs_) {
         return;
     }
-    nextPollAtMs_ = millis() + static_cast<uint32_t>(scheduler_.pollIntervalSeconds(mode)) * 1000UL;
+    nextPollAtMs_ = millis() + kPollIntervalMs;
 
     WoffuStatus status = woffuClient_.fetchStatus();
     lastWoffuStatus_ = status;
@@ -529,10 +526,8 @@ void AppStateMachine::refreshWorkdayInfo(int yday) {
     if (woffuClient_.fetchWorkday(info)) {
         workdayInfo_ = info;
         workdayValid_ = true;
-        logPrintf(
-            "Woffu: jornada de hoy - ventana pasiva %02u:%02u-%02u:%02u, fin de semana=%s, festivo=%s.\n",
-            info.startMinutes / 60, info.startMinutes % 60, info.endMinutes / 60, info.endMinutes % 60,
-            info.isWeekend ? "si" : "no", info.isHoliday ? "si" : "no");
+        logPrintf("Woffu: jornada de hoy - fin de semana=%s, festivo=%s.\n", info.isWeekend ? "si" : "no",
+                  info.isHoliday ? "si" : "no");
     } else {
         workdayValid_ = false;
         logPrintln(
@@ -585,9 +580,9 @@ void AppStateMachine::attemptAutoSign(bool isEntry) {
     logPrintf("Fichaje automatico: hora de %s alcanzada, comprobando estado actual en Woffu...\n", label);
 
     // Se pide el estado real (en vez de fiarse de lastWoffuStatus_, que puede
-    // llevar hasta 15 min desactualizado en ventana pasiva) justo antes de
-    // decidir: como fichar/desfichar es la misma llamada, fiarse de un estado
-    // obsoleto podria disparar la accion contraria a la deseada.
+    // llevar hasta un ciclo de polling desactualizado) justo antes de decidir:
+    // como fichar/desfichar es la misma llamada, fiarse de un estado obsoleto
+    // podria disparar la accion contraria a la deseada.
     WoffuStatus status = woffuClient_.fetchStatus();
     lastWoffuStatus_ = status;
     logPrintf("Estado Woffu: %s\n", woffuStatusName(status));
