@@ -8,6 +8,12 @@ services:
       # solo local: desde fuera se entra por el reverse proxy nginx (repo infra),
       # que hace TLS y publica https://woffu.ededona.es (con websockets).
       - "127.0.0.1:8095:8095"
+    # uid del usuario de la Raspberry, para poder escribir en ./data
+    user: "1000:1000"
+    volumes:
+      # registro de dispositivos (devices.json): nombre, hash del token y de la password
+      - ./data:/app/data
     env_file: .env
     environment:
       - TZ=Europe/Madrid
+      - DATA_DIR=/app/data

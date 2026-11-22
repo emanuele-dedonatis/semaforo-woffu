@@ -22,6 +22,7 @@
 <nav class="tabs" role="tablist">
   <button role="tab" class="tab active" data-tab="panel">Panel</button>
   <button role="tab" class="tab" data-tab="activity">Actividad</button>
+  <button role="tab" class="tab" data-tab="settings">Ajustes</button>
   <button role="tab" class="tab" data-tab="debug">Debug</button>
 </nav>
 
@@ -89,6 +90,82 @@
     </div>
   </section>
 
+  <!-- AJUSTES -->
+  <section id="tab-settings" class="tabpanel">
+    <p class="muted small" id="settings-offline" hidden>El dispositivo no está conectado: los ajustes se muestran con los últimos datos recibidos y no se pueden guardar.</p>
+
+    <div class="card">
+      <h2>Password del dispositivo</h2>
+      <p class="muted small">Protege esta web app y la red WiFi de configuración del dispositivo. <span id="pw-state"></span></p>
+      <form id="pw-form" class="form" autocomplete="off">
+        <label for="pw-new">Nueva password</label>
+        <input id="pw-new" type="password" minlength="8" maxlength="63" autocomplete="new-password" placeholder="Mínimo 8 caracteres">
+        <label for="pw-repeat">Repetir</label>
+        <input id="pw-repeat" type="password" minlength="8" maxlength="63" autocomplete="new-password">
+        <div class="grid2">
+          <button class="btn primary" type="submit" id="pw-save">Guardar password</button>
+          <button class="btn danger" type="button" id="pw-clear">Quitar password</button>
+        </div>
+      </form>
+    </div>
+
+    <form id="cfg-form" class="form" autocomplete="off">
+      <div class="card">
+        <h2>Horario</h2>
+        <p class="muted small">Franja en la que el semáforo está encendido y consulta Woffu.</p>
+        <div class="grid2">
+          <div><label for="cfg-window-start">Encendido</label><input id="cfg-window-start" type="time" required></div>
+          <div><label for="cfg-window-end">Apagado</label><input id="cfg-window-end" type="time" required></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Fichaje automático</h2>
+        <label class="check"><input type="checkbox" id="cfg-auto-sign"> Fichar entrada y salida solo a estas horas</label>
+        <div id="cfg-schedule" class="schedule"></div>
+      </div>
+
+      <div class="card">
+        <h2>Actualizaciones</h2>
+        <p class="small" id="ota-info">—</p>
+        <label class="check"><input type="checkbox" id="cfg-ota-auto"> Instalar automáticamente (al arrancar y una vez al día, al encenderse el semáforo)</label>
+        <div class="grid2" style="margin-top:10px">
+          <button class="btn" type="button" data-cmd="ota_check">Comprobar ahora</button>
+          <button class="btn" type="button" data-cmd="ota_update" data-confirm="¿Instalar la última versión del firmware? El dispositivo se reiniciará.">Actualizar ahora</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Conexión <span class="muted small">(reinicia el dispositivo)</span></h2>
+        <label for="cfg-wifi-ssid">Red WiFi</label>
+        <input id="cfg-wifi-ssid" required spellcheck="false">
+        <label for="cfg-wifi-pass">Password WiFi</label>
+        <input id="cfg-wifi-pass" type="password" placeholder="Sin cambios" autocomplete="new-password">
+        <label for="cfg-woffu-user">Usuario Woffu</label>
+        <input id="cfg-woffu-user" required spellcheck="false" autocapitalize="none">
+        <label for="cfg-woffu-pass">Password Woffu</label>
+        <input id="cfg-woffu-pass" type="password" placeholder="Sin cambios" autocomplete="new-password">
+        <label for="cfg-remote-url">Servidor de control remoto</label>
+        <input id="cfg-remote-url" spellcheck="false" autocapitalize="none" placeholder="Vacío = deshabilitado">
+        <p class="warn small">Una red WiFi o un servidor incorrectos dejan el dispositivo sin conexión con esta web app: habría que arreglarlo desde su portal de configuración, en la oficina.</p>
+      </div>
+
+      <button class="btn primary wide" type="submit" id="cfg-save">Guardar ajustes</button>
+    </form>
+
+    <div class="card" style="margin-top:12px">
+      <h2>NFC</h2>
+      <p class="muted small" id="nfc-info">—</p>
+      <button class="btn wide" data-cmd="nfc_learn">Aprender tarjeta</button>
+    </div>
+
+    <div class="card">
+      <h2>Restablecer de fábrica</h2>
+      <p class="muted small">Borra toda la configuración (WiFi, Woffu, horarios, password, tarjeta). El dispositivo perderá la conexión y habrá que configurarlo de nuevo desde su portal, en la oficina.</p>
+      <button class="btn danger wide" data-cmd="factory_reset" data-confirm="¿Seguro? El dispositivo borrará TODA su configuración y dejará de estar conectado hasta que lo configures de nuevo en persona.">Restablecer de fábrica</button>
+    </div>
+  </section>
+
   <!-- DEBUG -->
   <section id="tab-debug" class="tabpanel">
     <div class="card">
@@ -106,7 +183,6 @@
       <h2>Acciones</h2>
       <div class="grid2">
         <button class="btn" data-cmd="status">Pedir estado</button>
-        <button class="btn" data-cmd="ota_update" data-confirm="¿Buscar e instalar una actualización de firmware? El dispositivo se reiniciará si hay versión nueva.">Actualizar firmware</button>
         <button class="btn danger" data-cmd="reboot" data-confirm="¿Reiniciar el dispositivo?">Reiniciar</button>
       </div>
     </div>

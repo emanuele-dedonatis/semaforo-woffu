@@ -13,13 +13,13 @@
 <main class="login">
   <div class="login-mark" aria-hidden="true"><span></span><span></span><span></span></div>
   <h1>Semáforo Woffu</h1>
-  <p class="muted">Entra con el nombre del dispositivo y la password de su red WiFi de configuración.</p>
+  <p class="muted">Entra con el nombre del dispositivo (el de su red WiFi de configuración, <code>Semaforo-XXXXXX</code>) y su password. Si no le has puesto password, déjala vacía.</p>
   %ERROR%
   <form method="POST" action="/login">
     <label for="username">Dispositivo</label>
     <input id="username" name="username" placeholder="Semaforo-A1B2C3" autocomplete="username" autocapitalize="none" spellcheck="false" required>
     <label for="password">Password</label>
-    <input id="password" name="password" type="password" inputmode="numeric" autocomplete="current-password" required>
+    <input id="password" name="password" type="password" autocomplete="current-password">
     <button type="submit" class="btn primary wide">Entrar</button>
   </form>
 </main>

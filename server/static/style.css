@@ -217,3 +217,19 @@ main { max-width: 640px; margin: 0 auto; padding: 4px 16px 32px; }
   .hero { gap: 14px; }
   .hero .state { font-size: 1.4rem; }
 }
+
+/* ajustes */
+.form label { display: block; font-weight: 600; font-size: .9rem; margin: 10px 0 4px; }
+.form input:not([type="checkbox"]) {
+  width: 100%; font: inherit; padding: 10px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text);
+}
+.form .check { font-weight: 400; margin: 6px 0; }
+.form .grid2 { margin-top: 12px; }
+.schedule { display: grid; grid-template-columns: auto 1fr 1fr; gap: 6px 8px; align-items: center; margin-top: 10px; }
+.schedule span { font-size: .9rem; color: var(--muted); }
+.schedule input { padding: 8px !important; }
+.schedule.disabled { opacity: .5; }
+.warn { color: var(--warn); }
+.badge { display: inline-block; font-size: .75rem; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 15%, var(--card)); color: var(--accent); }
+code { font-size: .9em; }

@@ -7,6 +7,7 @@ const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
 const state = {
+  cfgDirty: false,
   presence: null,
   status: null,
   statusAt: null,
@@ -26,8 +27,10 @@ const MODE_NAMES = {
 const CMD_NAMES = {
   sign_in: "Fichar entrada", sign_out: "Fichar salida", refresh: "Consultar estado",
   led_set: "Color fijo", led_auto: "Automático", reboot: "Reiniciar",
-  ota_update: "Actualizar firmware", status: "Pedir estado",
+  ota_update: "Actualizar firmware", ota_check: "Comprobar actualización", status: "Pedir estado",
+  config_set: "Ajustes", nfc_learn: "Aprender tarjeta", factory_reset: "Restablecer de fábrica",
 };
+const DAYS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"];
 
 // ---------- utilidades ----------
 
@@ -137,6 +140,11 @@ function handle(msg) {
       setBusy(btn, false);
       const name = CMD_NAMES[msg.cmd] || msg.cmd;
       toast(`${name}: ${msg.msg || (msg.ok ? "ok" : "error")}`, !msg.ok);
+      if (msg.cmd === "config_set" && msg.ok) {
+        state.cfgDirty = false;
+        $$("#cfg-form input[type=password], #pw-form input").forEach((i) => { i.value = ""; });
+        renderSettings();
+      }
       break;
     }
   }
@@ -149,6 +157,7 @@ function renderAll() {
   renderHero();
   renderOverride();
   renderFacts();
+  renderSettings();
   $("#raw-status").textContent = state.status ? JSON.stringify(state.status, null, 2) : "—";
 }
 
@@ -274,6 +283,116 @@ function renderEvents(events, reset) {
   while (list.children.length > 200) list.lastChild.remove();
   $("#events-empty").hidden = list.children.length > 0;
 }
+
+// ---------- ajustes ----------
+
+function buildSchedule() {
+  const box = $("#cfg-schedule");
+  box.replaceChildren();
+  DAYS.forEach((day, i) => {
+    const label = document.createElement("span");
+    label.textContent = day;
+    const start = document.createElement("input");
+    start.type = "time"; start.id = `cfg-day${i}-start`; start.required = true; start.setAttribute("aria-label", `${day} entrada`);
+    const end = document.createElement("input");
+    end.type = "time"; end.id = `cfg-day${i}-end`; end.required = true; end.setAttribute("aria-label", `${day} salida`);
+    box.append(label, start, end);
+  });
+}
+
+function renderSettings() {
+  const s = state.status;
+  const online = !!(state.presence && state.presence.online);
+  $("#settings-offline").hidden = online;
+  $("#cfg-save").disabled = !online;
+  $("#pw-save").disabled = !online;
+  $("#pw-clear").disabled = !online;
+  if (!s || !s.config) return;
+  const c = s.config;
+
+  $("#pw-state").textContent = c.has_password
+    ? "Ahora mismo tiene password."
+    : "Ahora mismo NO tiene password: cualquiera que conozca el nombre del dispositivo puede entrar.";
+  $("#pw-clear").hidden = !c.has_password;
+
+  const o = s.ota || {};
+  let ota = `Instalada: ${s.fw}.`;
+  if (o.available) ota += ` Disponible: ${o.latest}.`;
+  else if (o.last_check_epoch) ota += " Es la última.";
+  if (o.last_check_epoch) ota += ` Comprobado ${ago(o.last_check_epoch)}.`;
+  $("#ota-info").textContent = ota;
+
+  if (s.nfc) {
+    $("#nfc-info").textContent = !s.nfc.reader
+      ? "No hay lector NFC conectado."
+      : (s.nfc.card ? "Hay una tarjeta aprendida; aprender otra la sustituye." : "Todavía no hay ninguna tarjeta aprendida.")
+        + " Al pulsar, acerca la tarjeta al lector en menos de 30 s.";
+  }
+
+  // No se pisa lo que el usuario esté editando.
+  if (state.cfgDirty) return;
+  $("#cfg-window-start").value = c.window_start;
+  $("#cfg-window-end").value = c.window_end;
+  $("#cfg-auto-sign").checked = c.auto_sign;
+  (c.auto_sign_schedule || []).forEach((d, i) => {
+    $(`#cfg-day${i}-start`).value = d.start;
+    $(`#cfg-day${i}-end`).value = d.end;
+  });
+  $("#cfg-schedule").classList.toggle("disabled", !c.auto_sign);
+  $("#cfg-ota-auto").checked = c.ota_auto;
+  $("#cfg-wifi-ssid").value = c.wifi_ssid;
+  $("#cfg-woffu-user").value = c.woffu_user;
+  $("#cfg-remote-url").value = c.remote_url;
+}
+
+function configChanges() {
+  const c = state.status.config;
+  const out = {};
+  const val = (id) => $(id).value.trim();
+  if (val("#cfg-window-start") !== c.window_start) out.window_start = val("#cfg-window-start");
+  if (val("#cfg-window-end") !== c.window_end) out.window_end = val("#cfg-window-end");
+  if ($("#cfg-auto-sign").checked !== c.auto_sign) out.auto_sign = $("#cfg-auto-sign").checked;
+  const schedule = DAYS.map((_, i) => ({ start: val(`#cfg-day${i}-start`), end: val(`#cfg-day${i}-end`) }));
+  if (JSON.stringify(schedule) !== JSON.stringify(c.auto_sign_schedule)) out.auto_sign_schedule = schedule;
+  if ($("#cfg-ota-auto").checked !== c.ota_auto) out.ota_auto = $("#cfg-ota-auto").checked;
+  if (val("#cfg-wifi-ssid") !== c.wifi_ssid) out.wifi_ssid = val("#cfg-wifi-ssid");
+  if ($("#cfg-wifi-pass").value) out.wifi_pass = $("#cfg-wifi-pass").value;
+  if (val("#cfg-woffu-user") !== c.woffu_user) out.woffu_user = val("#cfg-woffu-user");
+  if ($("#cfg-woffu-pass").value) out.woffu_pass = $("#cfg-woffu-pass").value;
+  if (val("#cfg-remote-url") !== c.remote_url) out.remote_url = val("#cfg-remote-url");
+  return out;
+}
+
+$("#cfg-form").addEventListener("input", () => {
+  state.cfgDirty = true;
+  $("#cfg-schedule").classList.toggle("disabled", !$("#cfg-auto-sign").checked);
+});
+
+$("#cfg-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (!state.status || !state.status.config) return;
+  const changes = configChanges();
+  if (!Object.keys(changes).length) { toast("No hay cambios"); return; }
+  const reboot = ["wifi_ssid", "wifi_pass", "woffu_user", "woffu_pass", "remote_url"].some((k) => k in changes);
+  if (reboot && !confirm("Cambiar la conexión (WiFi, Woffu o servidor) reinicia el dispositivo. Si algún dato es incorrecto, perderá la conexión con esta web app. ¿Guardar?")) return;
+  command($("#cfg-save"), { cmd: "config_set", config: changes });
+});
+
+$("#pw-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const pw = $("#pw-new").value;
+  if (pw.length < 8 || pw.length > 63) { toast("La password debe tener entre 8 y 63 caracteres", true); return; }
+  if (pw !== $("#pw-repeat").value) { toast("Las passwords no coinciden", true); return; }
+  if (!confirm("Se usará para entrar en esta web app y en la red WiFi de configuración del dispositivo. Tendrás que volver a entrar. ¿Guardar?")) return;
+  command($("#pw-save"), { cmd: "config_set", config: { device_password: pw } });
+});
+
+$("#pw-clear").addEventListener("click", () => {
+  if (!confirm("Sin password, cualquiera que conozca el nombre del dispositivo podrá entrar en esta web app y en su red WiFi de configuración. ¿Quitarla?")) return;
+  command($("#pw-clear"), { cmd: "config_set", config: { device_password: "" } });
+});
+
+buildSchedule();
 
 // ---------- consola ----------
 

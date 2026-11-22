@@ -3,14 +3,18 @@
 Un unico proceso aiohttp que:
 
 - acepta la conexion WebSocket saliente del dispositivo (``/ws/device``,
-  autenticada con HTTP Basic: nombre del dispositivo + password de su AP);
-- sirve la web app (``/``) protegida con login (mismo usuario/password);
+  autenticada con HTTP Basic: nombre del dispositivo + token secreto que el
+  propio dispositivo genera; el primer token con el que se presenta un nombre
+  queda registrado y despues solo se acepta ese - "trust on first use");
+- sirve la web app (``/``) con login: nombre del dispositivo + la password que
+  el dispositivo le comunica (puede ser vacia = sin password);
 - hace de puente entre ambos (``/ws/ui``): reenvia a los navegadores el
   estado, eventos y log del dispositivo, y al dispositivo los comandos.
 
-Todo el estado vive en memoria (ultimo estado + historial reciente de eventos
-y log): se pierde al reiniciar el contenedor, y el dispositivo lo vuelve a
-mandar al reconectar. Protocolo completo en Arquitectura.md, ``## Control
+El registro de dispositivos (nombre, hash del token, hash de la password) se
+guarda en ``DATA_DIR/devices.json``; el resto (ultimo estado, historial
+reciente de eventos y log) vive en memoria y se pierde al reiniciar el
+contenedor (el dispositivo lo vuelve a mandar al reconectar). Protocolo completo en Arquitectura.md, ``## Control
 remoto``.
 """
 
@@ -23,6 +27,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import secrets
 import time
 from collections import deque
@@ -41,24 +46,95 @@ LOG_HISTORY = 1500
 ACK_TIMEOUT_S = 90  # ota_update puede tardar (comprobacion contra GitHub)
 LOGIN_MAX_FAILURES = 5
 LOGIN_WINDOW_S = 15 * 60
+DEVICE_NAME_RE = re.compile(r"^Semaforo-[0-9A-F]{6}$")
+TOKEN_RE = re.compile(r"^[0-9a-f]{32}$")
+PBKDF2_ITERATIONS = 200_000
 
 # Comandos que la web app puede mandar al dispositivo (el resto se rechaza
 # aqui mismo, sin llegar al dispositivo).
-ALLOWED_COMMANDS = {"sign_in", "sign_out", "refresh", "led_set", "led_auto", "reboot", "ota_update", "status"}
+ALLOWED_COMMANDS = {
+    "sign_in", "sign_out", "refresh", "led_set", "led_auto", "reboot", "status",
+    "ota_check", "ota_update", "config_set", "nfc_learn", "factory_reset",
+}
 
 
-def parse_devices(spec: str) -> dict[str, str]:
-    """``"Semaforo-A1B2C3:12345678,Semaforo-...:..."`` -> {nombre: password}."""
-    devices = {}
-    for item in spec.split(","):
-        item = item.strip()
-        if not item:
-            continue
-        name, sep, password = item.partition(":")
-        if not sep or not name or not password:
-            raise SystemExit(f"DEVICES mal formado: {item!r} (esperado Nombre:password)")
-        devices[name.strip()] = password.strip()
-    return devices
+def hash_password(password: str) -> str | None:
+    """None = dispositivo sin password (web app abierta)."""
+    if not password:
+        return None
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, PBKDF2_ITERATIONS)
+    return f"{salt.hex()}${digest.hex()}"
+
+
+def verify_password(stored: str, password: str) -> bool:
+    salt_hex, _, digest_hex = stored.partition("$")
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt_hex), PBKDF2_ITERATIONS)
+    return hmac.compare_digest(digest.hex(), digest_hex)
+
+
+class Registry:
+    """Dispositivos conocidos, persistidos en JSON.
+
+    {nombre: {"token": sha256(token), "password": pbkdf2 o null, "registered_at": t}}
+    Para que un dispositivo pueda volver a registrarse (p.ej. tras borrar su
+    NVS entera, que le genera un token nuevo), se borra su entrada del fichero
+    y se reinicia el contenedor.
+    """
+
+    def __init__(self, path: Path, max_devices: int) -> None:
+        self.path = path
+        self.max_devices = max_devices
+        self.devices: dict[str, dict] = {}
+        if path.exists():
+            self.devices = json.loads(path.read_text())
+
+    def save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.devices, indent=2))
+        tmp.replace(self.path)
+
+    @staticmethod
+    def _token_hash(token: str) -> str:
+        return hashlib.sha256(token.encode()).hexdigest()
+
+    def authenticate_device(self, name: str, token: str) -> str:
+        """Devuelve "ok", "registered" (primera vez) o "rejected"."""
+        entry = self.devices.get(name)
+        if entry is None:
+            if len(self.devices) >= self.max_devices:
+                return "rejected"
+            self.devices[name] = {"token": self._token_hash(token), "password": None, "registered_at": time.time()}
+            self.save()
+            return "registered"
+        return "ok" if hmac.compare_digest(entry["token"], self._token_hash(token)) else "rejected"
+
+    def set_password(self, name: str, password: str) -> bool:
+        """Devuelve True si la password ha cambiado."""
+        entry = self.devices[name]
+        stored = entry.get("password")
+        if stored is None and not password:
+            return False
+        if stored is not None and password and verify_password(stored, password):
+            return False
+        entry["password"] = hash_password(password)
+        self.save()
+        return True
+
+    def check_login(self, name: str, password: str) -> bool:
+        entry = self.devices.get(name)
+        if entry is None:
+            # Mismo coste que una comprobacion real, para no revelar por
+            # tiempo de respuesta que nombres existen.
+            verify_password(f"{'00' * 16}${'00' * 32}", password)
+            return False
+        stored = entry.get("password")
+        return True if stored is None else verify_password(stored, password)
+
+    def password_marker(self, name: str) -> str:
+        entry = self.devices.get(name) or {}
+        return entry.get("password") or "-"
 
 
 @dataclass
@@ -147,24 +223,23 @@ class LoginLimiter:
 
 
 class App:
-    def __init__(self, devices: dict[str, str], secret: bytes) -> None:
-        self.devices = devices
+    def __init__(self, registry: Registry, secret: bytes) -> None:
+        self.registry = registry
         self.secret = secret
-        self.hubs = {name: DeviceHub(name) for name in devices}
+        self.hubs: dict[str, DeviceHub] = {}
         self.limiter = LoginLimiter()
+
+    def hub(self, name: str) -> DeviceHub:
+        if name not in self.hubs:
+            self.hubs[name] = DeviceHub(name)
+        return self.hubs[name]
 
     # --- autenticacion -------------------------------------------------
 
-    def check_credentials(self, name: str, password: str) -> bool:
-        expected = self.devices.get(name)
-        # compare_digest incluso si el nombre no existe, para no filtrar por
-        # tiempo de respuesta que nombres son validos.
-        return hmac.compare_digest((expected or "\0").encode(), password.encode()) and expected is not None
-
     def _session_sig(self, name: str, expires: int) -> str:
-        # La password entra en la firma: si cambia (otro dispositivo con el
-        # mismo nombre, DEVICES editado), las sesiones viejas dejan de valer.
-        payload = f"{name}|{expires}|{self.devices.get(name, '')}".encode()
+        # El hash de la password entra en la firma: al cambiarla, las sesiones
+        # abiertas con la anterior dejan de valer.
+        payload = f"{name}|{expires}|{self.registry.password_marker(name)}".encode()
         return hmac.new(self.secret, payload, hashlib.sha256).hexdigest()
 
     def make_session(self, name: str) -> str:
@@ -180,7 +255,7 @@ class App:
             expires = int(expires_s)
         except ValueError:
             return None
-        if name not in self.devices or expires < time.time():
+        if name not in self.registry.devices or expires < time.time():
             return None
         if not hmac.compare_digest(sig, self._session_sig(name, expires)):
             return None
@@ -223,7 +298,7 @@ class App:
         form = await request.post()
         name = str(form.get("username", "")).strip()
         password = str(form.get("password", ""))
-        if not self.check_credentials(name, password):
+        if not await asyncio.to_thread(self.registry.check_login, name, password):
             self.limiter.fail(ip)
             log.warning("login fallido de %s para %r", ip, name)
             await asyncio.sleep(1)
@@ -247,7 +322,8 @@ class App:
         raise response
 
     async def healthz(self, request: web.Request) -> web.Response:
-        return web.json_response({name: hub.online for name, hub in self.hubs.items()})
+        return web.json_response({"devices": len(self.registry.devices),
+                                  "online": sum(1 for hub in self.hubs.values() if hub.online)})
 
     # --- WebSocket del dispositivo --------------------------------------
 
@@ -267,12 +343,17 @@ class App:
         if self.limiter.blocked(ip):
             raise web.HTTPTooManyRequests()
         creds = self._basic_auth(request)
-        if creds is None or not self.check_credentials(*creds):
+        result = "rejected"
+        if creds is not None and DEVICE_NAME_RE.match(creds[0]) and TOKEN_RE.match(creds[1]):
+            result = self.registry.authenticate_device(*creds)
+        if result == "rejected":
             self.limiter.fail(ip)
             log.warning("dispositivo rechazado desde %s (%s)", ip, creds[0] if creds else "sin credenciales")
             raise web.HTTPUnauthorized(headers={"WWW-Authenticate": 'Basic realm="semaforo"'})
         name = creds[0]
-        hub = self.hubs[name]
+        if result == "registered":
+            log.info("%s: registrado (primera conexion) desde %s", name, ip)
+        hub = self.hub(name)
 
         # El ESP32 manda ping cada 25s; heartbeat aqui detecta ademas conexiones
         # muertas sin cierre limpio (corte de WiFi en la oficina).
@@ -312,6 +393,14 @@ class App:
 
     async def handle_device_message(self, hub: DeviceHub, data: dict) -> None:
         kind = data.get("type")
+        if kind in ("hello", "password") and isinstance(data.get("password"), str):
+            changed = await asyncio.to_thread(self.registry.set_password, hub.name, data["password"][:63])
+            if changed:
+                log.info("%s: password de la web app actualizada", hub.name)
+                # Las sesiones abiertas con la password anterior ya no valen:
+                # se cierran para que la web app vuelva al login.
+                for ws in list(hub.uis):
+                    await ws.close(code=4001, message=b"password changed")
         if kind == "hello":
             hub.hello = {k: data.get(k) for k in ("name", "fw", "reset_reason")}
             await hub.broadcast(hub.presence())
@@ -362,7 +451,7 @@ class App:
             raise web.HTTPUnauthorized()
         if not self.same_origin(request):
             raise web.HTTPForbidden()
-        hub = self.hubs[name]
+        hub = self.hub(name)
         ws = web.WebSocketResponse(heartbeat=30, max_msg_size=16 * 1024)
         await ws.prepare(request)
         hub.uis.add(ws)
@@ -400,20 +489,25 @@ class App:
         if cmd == "led_set":
             message["color"] = str(data.get("color", ""))
             message["mode"] = str(data.get("mode", "solid"))
+        elif cmd == "config_set":
+            config = data.get("config")
+            if not isinstance(config, dict) or len(json.dumps(config)) > 2048:
+                await reject("configuracion no valida")
+                return
+            message["config"] = config
         hub.pending[cmd_id] = PendingCommand(cmd, time.time(), rid)
         await hub.device_ws.send_str(json.dumps(message))
         log.info("%s: comando %s (%s)", hub.name, cmd, cmd_id)
 
 
 def build_app() -> web.Application:
-    devices = parse_devices(os.environ.get("DEVICES", ""))
-    if not devices:
-        raise SystemExit("Falta DEVICES (p.ej. DEVICES=Semaforo-A1B2C3:12345678), ver server/README.md")
+    registry = Registry(Path(os.environ.get("DATA_DIR", "data")) / "devices.json",
+                        int(os.environ.get("MAX_DEVICES", "20")))
     secret_env = os.environ.get("SESSION_SECRET")
     # Sin SESSION_SECRET fijo, las sesiones caducan en cada reinicio del contenedor.
     secret = secret_env.encode() if secret_env else secrets.token_bytes(32)
 
-    state = App(devices, secret)
+    state = App(registry, secret)
     app = web.Application()
     app.add_routes([
         web.get("/", state.index),
@@ -440,7 +534,7 @@ def build_app() -> web.Application:
     app.on_startup.append(start_background)
     app.on_cleanup.append(stop_background)
     app.on_shutdown.append(close_sockets)
-    log.info("dispositivos configurados: %s", ", ".join(devices))
+    log.info("dispositivos registrados: %s", ", ".join(registry.devices) or "ninguno")
     return app
 
 

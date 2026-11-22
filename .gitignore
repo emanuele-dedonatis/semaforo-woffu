@@ -17,3 +17,4 @@ node_modules/
 
 # Backend (server/): secretos locales
 server/.env
+server/data/
