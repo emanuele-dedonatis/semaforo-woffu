@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#16181d">
+<title>Semáforo Woffu</title>
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="manifest" href="/static/manifest.webmanifest">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="title">
+    <h1 id="device-name">Semáforo</h1>
+    <span id="presence" class="pill offline"><i></i><span>Conectando…</span></span>
+  </div>
+  <form method="POST" action="/logout"><button class="btn ghost small" title="Cerrar sesión">Salir</button></form>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button role="tab" class="tab active" data-tab="panel">Panel</button>
+  <button role="tab" class="tab" data-tab="activity">Actividad</button>
+  <button role="tab" class="tab" data-tab="debug">Debug</button>
+</nav>
+
+<main>
+  <!-- PANEL -->
+  <section id="tab-panel" class="tabpanel active">
+    <div class="card hero">
+      <div class="light" id="light" aria-label="Semáforo">
+        <span class="lamp red"></span>
+        <span class="lamp yellow"></span>
+        <span class="lamp green"></span>
+      </div>
+      <div class="hero-text">
+        <div class="label">Tu estado en Woffu</div>
+        <div class="state" id="woffu-state">—</div>
+        <div class="muted small" id="woffu-sub"></div>
+        <div class="muted small" id="led-sub"></div>
+      </div>
+    </div>
+
+    <div class="banner" id="override-banner" hidden>
+      <div>
+        <strong>Color fijo activo.</strong>
+        <span id="override-text"></span>
+      </div>
+      <button class="btn small" data-cmd="led_auto">Volver a automático</button>
+    </div>
+
+    <div class="card">
+      <h2>Fichaje</h2>
+      <div class="grid2">
+        <button class="btn primary big" data-cmd="sign_in" data-confirm="¿Fichar entrada en Woffu?">Fichar entrada</button>
+        <button class="btn danger big" data-cmd="sign_out" data-confirm="¿Fichar salida en Woffu?">Fichar salida</button>
+      </div>
+      <button class="btn wide" data-cmd="refresh">Consultar estado ahora</button>
+      <p class="muted small">Antes de fichar se consulta el estado real en Woffu: si ya estabas dentro (o fuera) no se hace nada.</p>
+    </div>
+
+    <div class="card">
+      <h2>Semáforo</h2>
+      <p class="muted small">Un color fijo oculta tu estado a quien mire el semáforo, y se mantiene (también tras reiniciar) hasta que vuelvas a automático.</p>
+      <div class="swatches">
+        <button class="swatch auto" data-led="auto"><span></span>Automático</button>
+        <button class="swatch" data-led="red"><span class="c-red"></span>Rojo</button>
+        <button class="swatch" data-led="yellow"><span class="c-yellow"></span>Ámbar</button>
+        <button class="swatch" data-led="green"><span class="c-green"></span>Verde</button>
+        <button class="swatch" data-led="all"><span class="c-all"></span>Todos</button>
+        <button class="swatch" data-led="off"><span class="c-off"></span>Apagado</button>
+      </div>
+      <label class="check"><input type="checkbox" id="led-blink"> Parpadeando</label>
+    </div>
+
+    <div class="card">
+      <h2>Dispositivo</h2>
+      <dl class="facts" id="facts"></dl>
+    </div>
+  </section>
+
+  <!-- ACTIVIDAD -->
+  <section id="tab-activity" class="tabpanel">
+    <div class="card">
+      <h2>Actividad reciente</h2>
+      <ol class="events" id="events"></ol>
+      <p class="muted small" id="events-empty">Sin actividad todavía.</p>
+    </div>
+  </section>
+
+  <!-- DEBUG -->
+  <section id="tab-debug" class="tabpanel">
+    <div class="card">
+      <div class="row-between">
+        <h2>Log del dispositivo</h2>
+        <div class="row">
+          <input id="log-filter" class="small-input" placeholder="Filtrar…" spellcheck="false">
+          <button class="btn small" id="log-pause">Pausar</button>
+          <button class="btn small" id="log-copy">Copiar</button>
+        </div>
+      </div>
+      <pre class="console" id="console"></pre>
+    </div>
+    <div class="card">
+      <h2>Acciones</h2>
+      <div class="grid2">
+        <button class="btn" data-cmd="status">Pedir estado</button>
+        <button class="btn" data-cmd="ota_update" data-confirm="¿Buscar e instalar una actualización de firmware? El dispositivo se reiniciará si hay versión nueva.">Actualizar firmware</button>
+        <button class="btn danger" data-cmd="reboot" data-confirm="¿Reiniciar el dispositivo?">Reiniciar</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Último estado (JSON)</h2>
+      <pre class="console raw" id="raw-status">—</pre>
+    </div>
+  </section>
+</main>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

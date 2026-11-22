@@ -1,0 +1,13 @@
+services:
+  semaforo:
+    build: .
+    image: semaforo-woffu-server
+    container_name: semaforo-woffu-server
+    restart: unless-stopped
+    ports:
+      # solo local: desde fuera se entra por el reverse proxy nginx (repo infra),
+      # que hace TLS y publica https://woffu.ededona.es (con websockets).
+      - "127.0.0.1:8095:8095"
+    env_file: .env
+    environment:
+      - TZ=Europe/Madrid
