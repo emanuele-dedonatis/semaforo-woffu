@@ -49,21 +49,28 @@ Compatible con cualquier placa ESP32 que tenga WiFi (el provisioning y el OTA so
 
 ## Control remoto (opcional)
 
-- **Deshabilitado por defecto**. Se activa desde el portal de configuración indicando la URL del servidor (`wss://…/ws/device`).
+- **Habilitado por defecto** contra `wss://woffu.ededona.es/ws/device`. Desde el portal o desde la propia web app se puede poner otra URL o dejarla vacía para deshabilitarlo.
+- En el servidor no se configura nada: cada dispositivo se registra solo la primera vez que se conecta.
 - El dispositivo abre una conexión WebSocket saliente (TLS) hacia un servidor propio y se mantiene conectado mientras está en modo normal, reconectando solo si se cae.
 - El servidor sirve una web app (pensada para el móvil) desde la que se puede:
   - ver si el dispositivo está conectado, el estado en Woffu (dentro/fuera), el color real del semáforo y datos del dispositivo (firmware, WiFi, memoria, horario, NFC, fichaje automático);
   - **fichar entrada/salida** a distancia, con la misma comprobación previa del estado real que el fichaje automático (no ficha si ya se está en el estado pedido, ni si no se puede confirmar el estado);
   - **poner un color fijo** (rojo, ámbar, verde, todos o apagado; fijo o parpadeando) para que quien mire el semáforo no vea el estado real. Se mantiene, también tras reiniciar, hasta que se vuelve a **automático** desde la web app. Fuera de horario/festivo el semáforo sigue apagado;
-  - forzar una consulta a Woffu, reiniciar el dispositivo o lanzar una actualización OTA;
+  - forzar una consulta a Woffu, reiniciar el dispositivo, comprobar o lanzar una actualización OTA;
+  - cambiar **toda la configuración** que se puede cambiar en el portal: password del dispositivo, horario, fichaje automático, actualización automática, WiFi, Woffu, servidor, aprender la tarjeta NFC y restablecer de fábrica;
   - ver la actividad reciente (fichajes por NFC, horario o remoto, conexiones, errores) y, en modo debug, el log del dispositivo en vivo (el mismo que sale por el puerto serie).
-- Acceso a la web app con usuario = nombre del dispositivo (`Semaforo-XXXXXX`) y password = la de la red WiFi de su portal; el dispositivo usa la misma pareja para autenticarse ante el servidor.
+- Acceso a la web app con el nombre del dispositivo (`Semaforo-XXXXXX`) y su password.
+
+## Password del dispositivo
+
+- Por defecto el dispositivo **no tiene password**: la red WiFi del portal es abierta y en la web app se entra solo con el nombre.
+- Desde el portal o desde la web app el usuario puede poner una password (8-63 caracteres, o vacía para quitarla). La misma password protege la red WiFi del portal y la web app.
+- Si se olvida, se ve por el puerto serie al abrir el portal (con acceso físico al dispositivo).
 
 ## Funcionalidades futuras
 
 - Fichaje automático adicional (p.ej. detectando conexión bluetooth del móvil o del portátil).
 - Notificaciones (p.ej. Telegram) a partir de los eventos del control remoto.
-- Password propia para el dispositivo/web app (hoy derivada de la MAC, ver Arquitectura.md, `## Control remoto`).
 
 ## Hardware
 
@@ -74,7 +81,10 @@ Compatible con cualquier placa ESP32 que tenga WiFi (el provisioning y el OTA so
 
 - El dispositivo debe soportar updates de firmware OTA, para poder iterar funcionalidad sin acceso físico.
 - **Vía WiFi, descargando desde GitHub Releases** (repo público, sin necesidad de autenticación).
-- **Comprobación automática**, sin necesidad de que el usuario haga nada, en cuanto el dispositivo tiene WiFi y hora sincronizada mientras el portal está activo (no depende de que se abra la página). La página muestra si el firmware está al día o si hay una versión nueva; **instalación bajo demanda**, con un botón que solo aparece cuando hay una actualización disponible (solo durante la ventana de provisioning activa). Si la comprobación falla, no hay reintento automático ni botón: hay que reiniciar el dispositivo.
+- **Comprobación automática**, sin necesidad de que el usuario haga nada: al arrancar (en cuanto hay WiFi y hora sincronizada, antes de abrir el portal) y además **una vez al día**, al encenderse el semáforo a la hora configurada. El portal y la web app muestran si el firmware está al día o si hay una versión nueva.
+- **Instalación bajo demanda** por defecto: con el botón del portal (solo durante la ventana de provisioning) o el de la web app.
+- **Actualización automática** (opcional, desactivada por defecto, casilla en el portal y en la web app): si la comprobación encuentra una versión nueva, se instala sola y el dispositivo se reinicia.
+- Si una comprobación falla, no se reintenta hasta la siguiente (al día siguiente o al reiniciar), o a mano desde la web app.
 - Firmware firmado/verificado: a valorar como mejora posterior (no bloqueante para el MVP).
 
 ## Provisioning (portal WiFi)
