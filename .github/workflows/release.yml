@@ -1,8 +1,15 @@
 name: Release
 
+# Solo los cambios del firmware publican una release (OTA): el backend y la
+# web app (server/) se despliegan aparte en la Raspberry, ver server/README.md.
 on:
   push:
     branches: [main]
+    paths:
+      - "firmware/**"
+      - ".github/workflows/release.yml"
+      - ".releaserc.json"
+      - "package.json"
 
 permissions:
   contents: write

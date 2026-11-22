@@ -1,12 +1,20 @@
 {
   "branches": ["main"],
   "plugins": [
-    "@semantic-release/commit-analyzer",
+    [
+      "@semantic-release/commit-analyzer",
+      {
+        "releaseRules": [
+          { "scope": "server", "release": false },
+          { "scope": "infra", "release": false }
+        ]
+      }
+    ],
     "@semantic-release/release-notes-generator",
     [
       "@semantic-release/exec",
       {
-        "prepareCmd": "tools/build_firmware.sh ${nextRelease.version}"
+        "prepareCmd": "firmware/tools/build_firmware.sh ${nextRelease.version}"
       }
     ],
     [
