@@ -19,7 +19,7 @@ void Config::begin() {
     // Sin clave guardada = URL por defecto; guardada vacia = deshabilitado.
     current_.remoteUrl = prefs.isKey("rem_url") ? prefs.getString("rem_url", "") : String(kDefaultRemoteUrl);
     current_.devicePassword = prefs.getString("dev_pass", "");
-    current_.otaAutoUpdate = prefs.getBool("ota_auto", false);
+    current_.otaAutoUpdate = prefs.getBool("ota_auto", true);
     // led_ovr: 0 = sin override; si no, 0x80 | (color << 4) | mode (ver setLedOverride()).
     uint8_t ovr = prefs.getUChar("led_ovr", 0);
     hasLedOverride_ = ovr != 0;

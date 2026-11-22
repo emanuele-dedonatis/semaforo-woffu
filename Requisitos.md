@@ -83,7 +83,7 @@ Compatible con cualquier placa ESP32 que tenga WiFi (el provisioning y el OTA so
 - **Vía WiFi, descargando desde GitHub Releases** (repo público, sin necesidad de autenticación).
 - **Comprobación automática**, sin necesidad de que el usuario haga nada: al arrancar (en cuanto hay WiFi y hora sincronizada, antes de abrir el portal) y además **una vez al día**, al encenderse el semáforo a la hora configurada. El portal y la web app muestran si el firmware está al día o si hay una versión nueva.
 - **Instalación bajo demanda** por defecto: con el botón del portal (solo durante la ventana de provisioning) o el de la web app.
-- **Actualización automática** (opcional, desactivada por defecto, casilla en el portal y en la web app): si la comprobación encuentra una versión nueva, se instala sola y el dispositivo se reinicia.
+- **Actualización automática** (activada por defecto, desactivable con una casilla en el portal y en la web app): si la comprobación encuentra una versión nueva, se instala sola y el dispositivo se reinicia.
 - Si una comprobación falla, no se reintenta hasta la siguiente (al día siguiente o al reiniciar), o a mano desde la web app.
 - Firmware firmado/verificado: a valorar como mejora posterior (no bloqueante para el MVP).
 

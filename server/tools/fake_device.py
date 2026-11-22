@@ -32,7 +32,7 @@ class FakeDevice:
             "wifi_ssid": "Oficina", "woffu_user": "yo@empresa.com",
             "window_start": "07:30", "window_end": "19:00", "auto_sign": False,
             "auto_sign_schedule": [{"start": "08:30", "end": "16:30"}] * 4 + [{"start": "08:30", "end": "14:00"}],
-            "remote_url": "wss://woffu.ededona.es/ws/device", "ota_auto": False,
+            "remote_url": "wss://woffu.ededona.es/ws/device", "ota_auto": True,
         }
         self.card = True
 

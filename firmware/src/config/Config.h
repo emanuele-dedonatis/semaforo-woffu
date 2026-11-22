@@ -47,7 +47,7 @@ struct DeviceConfig {
 
     // Instalar solas las actualizaciones OTA que se encuentren (al arrancar y
     // una vez al dia, al encenderse el semaforo), sin pulsar "Actualizar".
-    bool otaAutoUpdate = false;
+    bool otaAutoUpdate = true;
 };
 
 // Comprueba que una configuracion se puede guardar (misma validacion para el
