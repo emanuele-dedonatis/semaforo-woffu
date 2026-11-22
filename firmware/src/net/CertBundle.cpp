@@ -5,3 +5,7 @@ extern const uint8_t rootca_crt_bundle_start[] asm("_binary_data_cert_x509_crt_b
 void applyCertBundle(WiFiClientSecure& client) {
     client.setCACertBundle(rootca_crt_bundle_start);
 }
+
+const uint8_t* certBundle() {
+    return rootca_crt_bundle_start;
+}

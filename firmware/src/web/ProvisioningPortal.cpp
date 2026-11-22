@@ -3,7 +3,7 @@
 #include <WebServer.h>
 #include <DNSServer.h>
 #include <WiFi.h>
-#include <esp_mac.h>
+#include "config/DeviceIdentity.h"
 #include "Log.h"
 #include "Version.h"
 
@@ -209,6 +209,8 @@ select{width:100%;padding:.5em;box-sizing:border-box;font-size:1em}
 </div>
 <div class="checkbox-row"><input name="auto_sign_enabled" type="checkbox" id="auto_sign_enabled" %AUTO_SIGN_CHECKED%><label for="auto_sign_enabled">Fichaje automatico (ficha/desficha solo a la hora configurada de cada dia)</label></div>
 %AUTO_SIGN_SCHEDULE%
+<label>Servidor de control remoto (opcional)</label><input name="remote_url" value="%REMOTE_URL%" placeholder="wss://servidor/ws/device">
+<p class="version">Vacio = deshabilitado. El dispositivo se identifica como %DEVICE_NAME% con la misma password que esta red WiFi; son tambien el usuario/password de la web app del servidor.</p>
 <button type="submit">Guardar y reiniciar</button>
 </form>
 <hr>
@@ -229,20 +231,11 @@ void ProvisioningPortal::begin(const DeviceConfig& current, bool hasLearnedCard)
     hasLearnedCard_ = hasLearnedCard;
     nfcLearnUiState_ = NfcLearnUiState::IDLE;
 
-    uint8_t mac[6] = {0};
-    esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    char apSsid[24];
-    snprintf(apSsid, sizeof(apSsid), "Semaforo-%02X%02X%02X", mac[3], mac[4], mac[5]);
+    String apSsid = DeviceIdentity::name();
+    String apPassword = DeviceIdentity::password();
 
-    uint32_t passValue = 0;
-    for (uint8_t b : mac) {
-        passValue = (passValue * 31) + b;
-    }
-    char apPassword[9];
-    snprintf(apPassword, sizeof(apPassword), "%08u", passValue % 100000000UL);
-
-    WiFi.softAP(apSsid, apPassword);
-    logPrintf("Portal WiFi: %s, password: %s (192.168.4.1)\n", apSsid, apPassword);
+    WiFi.softAP(apSsid.c_str(), apPassword.c_str());
+    logPrintf("Portal WiFi: %s, password: %s (192.168.4.1)\n", apSsid.c_str(), apPassword.c_str());
 
     ssidOptionsHtml_ = scanSsidOptionsHtml(current_.wifiSsid, current_.wifiPassword);
 
@@ -430,6 +423,8 @@ void ProvisioningPortal::handleRoot() {
     page.replace("%WIN_END%", minutesToHhMm(current_.activeWindow.endMinutes));
     page.replace("%AUTO_SIGN_CHECKED%", current_.autoSignEnabled ? "checked" : "");
     page.replace("%AUTO_SIGN_SCHEDULE%", renderAutoSignScheduleHtml(current_.autoSignSchedule));
+    page.replace("%REMOTE_URL%", htmlEscape(current_.remoteUrl));
+    page.replace("%DEVICE_NAME%", htmlEscape(DeviceIdentity::name()));
     server_->send(200, "text/html", page);
 }
 
@@ -439,6 +434,8 @@ void ProvisioningPortal::handleSave() {
     config.wifiPassword = server_->arg("wifi_pass");
     config.woffuUsername = server_->arg("woffu_user");
     config.woffuPassword = server_->arg("woffu_pass");
+    config.remoteUrl = server_->arg("remote_url");
+    config.remoteUrl.trim();
 
     bool ok = true;
     ok &= parseHhMm(server_->arg("win_start"), config.activeWindow.startMinutes);
@@ -447,6 +444,11 @@ void ProvisioningPortal::handleSave() {
         String field = kAutoSignDayFields[i];
         ok &= parseHhMm(server_->arg("auto_" + field + "_start"), config.autoSignSchedule[i].startMinutes);
         ok &= parseHhMm(server_->arg("auto_" + field + "_end"), config.autoSignSchedule[i].endMinutes);
+    }
+
+    if (!config.remoteUrl.isEmpty() && !config.remoteUrl.startsWith("wss://") &&
+        !config.remoteUrl.startsWith("ws://")) {
+        ok = false;
     }
 
     if (!ok || config.wifiSsid.isEmpty() || config.woffuUsername.isEmpty()) {

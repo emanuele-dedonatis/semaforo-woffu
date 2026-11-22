@@ -1,9 +1,11 @@
 #include "AppStateMachine.h"
 
+#include <WiFi.h>
 #include <time.h>
 
 #include "Log.h"
 #include "Version.h"
+#include "config/DeviceIdentity.h"
 
 namespace {
 constexpr uint8_t kPinLedRed = 25;
@@ -85,6 +87,71 @@ const char* pollModeName(PollMode mode) {
     }
 }
 
+const char* woffuStatusCode(WoffuStatus status) {
+    switch (status) {
+        case WoffuStatus::CLOCKED_IN:
+            return "in";
+        case WoffuStatus::CLOCKED_OUT:
+            return "out";
+        default:
+            return "unknown";
+    }
+}
+
+// Nombres de LedColor/LedMode en el protocolo del control remoto.
+const char* const kLedColorNames[] = {"off", "red", "yellow", "green", "all"};
+const char* const kLedModeNames[] = {"off", "solid", "blink_slow", "blink_fast", "rotate", "rotate_fast"};
+
+const char* ledColorName(LedColor color) {
+    uint8_t i = static_cast<uint8_t>(color);
+    return i < sizeof(kLedColorNames) / sizeof(kLedColorNames[0]) ? kLedColorNames[i] : "?";
+}
+
+const char* ledModeName(LedMode mode) {
+    uint8_t i = static_cast<uint8_t>(mode);
+    return i < sizeof(kLedModeNames) / sizeof(kLedModeNames[0]) ? kLedModeNames[i] : "?";
+}
+
+// Solo se aceptan como color fijo remoto los modos "de reposo" (no los de
+// rotacion, que se usan como indicador de "cargando/procesando").
+bool parseOverride(const String& color, const String& mode, LedCommand& out) {
+    bool colorOk = false;
+    for (uint8_t i = 0; i < sizeof(kLedColorNames) / sizeof(kLedColorNames[0]); i++) {
+        if (color == kLedColorNames[i]) {
+            out.color = static_cast<LedColor>(i);
+            colorOk = true;
+        }
+    }
+    if (!colorOk) {
+        return false;
+    }
+    if (out.color == LedColor::OFF) {
+        out.mode = LedMode::OFF;
+        return true;
+    }
+    if (mode == "" || mode == "solid") {
+        out.mode = LedMode::SOLID;
+    } else if (mode == "blink_slow") {
+        out.mode = LedMode::BLINK_SLOW;
+    } else if (mode == "blink_fast") {
+        out.mode = LedMode::BLINK_FAST;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+void ledToJson(JsonObject obj, const LedCommand& cmd) {
+    obj["color"] = ledColorName(cmd.color);
+    obj["mode"] = ledModeName(cmd.mode);
+}
+
+String minutesToHhMm(uint16_t minutes) {
+    char buf[6];
+    snprintf(buf, sizeof(buf), "%02u:%02u", minutes / 60, minutes % 60);
+    return String(buf);
+}
+
 const char* woffuStatusName(WoffuStatus status) {
     switch (status) {
         case WoffuStatus::CLOCKED_IN:
@@ -99,17 +166,26 @@ const char* woffuStatusName(WoffuStatus status) {
 
 void AppStateMachine::begin() {
     config_.begin();
+    uint8_t overrideColor = 0;
+    uint8_t overrideMode = 0;
+    if (config_.ledOverride(overrideColor, overrideMode)) {
+        overrideActive_ = true;
+        override_.color = static_cast<LedColor>(overrideColor);
+        override_.mode = static_cast<LedMode>(overrideMode);
+        logPrintf("Semaforo: color fijo activo (%s, %s), puesto desde el control remoto.\n",
+                  ledColorName(override_.color), ledModeName(override_.mode));
+    }
     led_.begin(kPinLedRed, kPinLedYellow, kPinLedGreen);
     // Fallo no fatal: el dispositivo sigue funcionando sin fichaje por NFC si
     // el lector no responde (cableado incorrecto, modulo en otro modo...).
-    nfcReader_.begin(kPinNfcCs);
+    nfcReaderOk_ = nfcReader_.begin(kPinNfcCs);
     // Rotando desde el primer instante: portal_.begin() (mas abajo, via
     // enterPortalWindow()) incluye un escaneo de redes WiFi que ya tarda unos
     // segundos por si solo, y sin esto los LEDs se quedarian apagados durante
     // ese hueco en vez de mostrar que el dispositivo esta "cargando".
     // updateLedForCurrentState() lo sustituye por el patron definitivo en
     // cuanto el portal esta realmente listo.
-    led_.set(ledRotate());
+    setLed(ledRotate());
 
     otaUpdater_.setBeforeFlashCallback([this](const String& from, const String& to) {
         config_.markOtaPending(from, to);
@@ -130,8 +206,15 @@ void AppStateMachine::begin() {
             } else {
                 logPrintf("OTA: descargando firmware... %d%%\n", percent);
             }
+            if (state_ == AppState::RUNNING && percent % 20 == 0) {
+                remote_.sendEvent("ota", "Descargando firmware... " + String(percent) + "%");
+            }
         }
-        portal_.loop();
+        // En RUNNING (OTA lanzada desde el control remoto) el portal esta
+        // apagado, no hay nada que bombear.
+        if (state_ == AppState::PORTAL_WINDOW) {
+            portal_.loop();
+        }
     });
 
     String otaFrom, otaTo;
@@ -217,7 +300,7 @@ void AppStateMachine::enterConnecting() {
     logPrintln("Conectando a la WiFi configurada y sincronizando hora antes de abrir el portal...");
     wifi_.begin(config_.get().wifiSsid, config_.get().wifiPassword);
     connectingDeadlineMs_ = millis() + kConnectingTimeoutMs;
-    led_.set(ledRotate());
+    setLed(ledRotate());
 }
 
 void AppStateMachine::handleConnecting() {
@@ -259,13 +342,15 @@ void AppStateMachine::enterRunning() {
     }
     scheduler_.configure(config_.get());
     woffuClient_.begin(config_.get().woffuUsername, config_.get().woffuPassword);
+    remote_.begin(config_.get().remoteUrl, DeviceIdentity::name(), DeviceIdentity::password());
+    statusLedValid_ = false;
     wifiDisconnectedSinceMs_ = millis();
     wifiConnectTimeoutLogged_ = false;
     // Rotando hasta que handleRunning() tenga un estado real que mostrar
     // (reconectar wifi, sincronizar NTP y la primera consulta a Woffu pueden
     // tardar unos segundos): dejarlo en OFF aqui seria indistinguible del OFF
     // legitimo por estar fuera de horario/fin de semana.
-    led_.set(ledRotate());
+    setLed(ledRotate());
 }
 
 void AppStateMachine::handlePortal() {
@@ -304,7 +389,7 @@ void AppStateMachine::handlePortal() {
         nfcLearnActive_ = true;
         nfcLearnDeadlineMs_ = millis() + kNfcLearnTimeoutMs;
         logPrintln("NFC: aprendizaje iniciado desde el portal, esperando tarjeta...");
-        led_.set(ledRotateFast());
+        setLed(ledRotateFast());
     }
     if (nfcLearnActive_) {
         String uid;
@@ -312,7 +397,7 @@ void AppStateMachine::handlePortal() {
             config_.setLearnedCardUid(uid);
             logPrintf("NFC: tarjeta aprendida (UID %s).\n", uid.c_str());
             portal_.reportNfcLearnSuccess(uid);
-            led_.set(ledFastBlink(LedColor::ALL));
+            setLed(ledFastBlink(LedColor::ALL));
             nfcLearnActive_ = false;
             nfcLearnResultUntilMs_ = millis() + kNfcLearnResultHoldMs;
         } else if (millis() >= nfcLearnDeadlineMs_) {
@@ -415,10 +500,10 @@ void AppStateMachine::handleRunning() {
         if (!wifiConnectTimeoutLogged_ && millis() - wifiDisconnectedSinceMs_ > kWifiConnectTimeoutMs) {
             logPrintln("Error: no se ha podido conectar a la WiFi configurada (revisa SSID/password en el portal).");
             wifiConnectTimeoutLogged_ = true;
-            // Un unico led_.set(): LedController resetea la fase del parpadeo cada vez que
+            // Un unico setLed(): LedController resetea la fase del parpadeo cada vez que
             // recibe un comando (xQueueOverwrite), asi que reenviarlo en cada vuelta de loop()
             // (mucho mas rapido que el periodo de parpadeo) lo dejaria fijo en vez de parpadeando.
-            led_.set(ledSlowBlink(LedColor::YELLOW));
+            showStatusLed(ledSlowBlink(LedColor::YELLOW));
         }
         return;
     }
@@ -446,12 +531,22 @@ void AppStateMachine::handleRunning() {
     if (!runningPollModeKnown_ || mode != runningPollMode_) {
         runningPollMode_ = mode;
         runningPollModeKnown_ = true;
+        pollModeReason_ = reason;
         nextPollAtMs_ = millis(); // fuerza un poll inmediato al entrar en una ventana nueva
         logPrintf("Cambio de ventana de polling: %s (%s)\n", pollModeName(mode), reason.c_str());
+        remote_.requestStatus();
     }
 
+    // Control remoto: tambien fuera de la ventana de encendido (p.ej. para
+    // desfichar a distancia si se olvido al salir), por eso va antes del
+    // return de PollMode::OFF.
+    handleRemote(mode);
+
     if (mode == PollMode::OFF) {
-        led_.set(ledOff());
+        // El color fijo remoto no aplica aqui: fuera de horario el semaforo
+        // esta apagado igualmente, sin estado que ocultar.
+        statusLedValid_ = false;
+        setLed(ledOff());
         return;
     }
 
@@ -474,21 +569,24 @@ void AppStateMachine::handleRunning() {
     String uid;
     if (nfcReader_.poll(uid)) {
         logPrintf("NFC: tarjeta detectada (UID %s).\n", uid.c_str());
-        led_.set(ledRotateFast());
+        setLed(ledRotateFast());
 
         if (config_.hasLearnedCard() && uid == config_.learnedCardUid()) {
             const char* accion = (lastWoffuStatus_ == WoffuStatus::CLOCKED_IN) ? "salida" : "entrada";
             logPrintf("NFC: UID coincide con la tarjeta aprendida. Fichando %s...\n", accion);
             if (woffuClient_.toggleSign()) {
                 logPrintf("Woffu API: fichaje de %s registrado por NFC.\n", accion);
-                led_.set(ledFastBlink(LedColor::GREEN));
+                remote_.sendEvent("sign", String("Fichaje de ") + accion + " registrado por NFC.");
+                setLed(ledFastBlink(LedColor::GREEN));
             } else {
                 logPrintln("Woffu API: error al registrar el fichaje por NFC.");
-                led_.set(ledFastBlink(LedColor::YELLOW));
+                remote_.sendEvent("error", "Error al registrar el fichaje por NFC.");
+                setLed(ledFastBlink(LedColor::YELLOW));
             }
         } else {
             logPrintln("NFC: UID no coincide con la tarjeta aprendida.");
-            led_.set(ledFastBlink(LedColor::RED));
+            remote_.sendEvent("nfc", "Tarjeta NFC no reconocida.");
+            setLed(ledFastBlink(LedColor::RED));
         }
 
         // Fuerza un repoll real justo despues de la ventana de resultado (en
@@ -505,15 +603,29 @@ void AppStateMachine::handleRunning() {
         return;
     }
     nextPollAtMs_ = millis() + kPollIntervalMs;
+    pollWoffuNow(mode);
+}
 
+void AppStateMachine::pollWoffuNow(PollMode mode) {
     WoffuStatus status = woffuClient_.fetchStatus();
-    lastWoffuStatus_ = status;
+    setWoffuStatus(status);
+    lastPollEpoch_ = time(nullptr);
     logPrintf("Estado Woffu: %s\n", woffuStatusName(status));
-    if (woffuClient_.credentialsInvalid()) {
-        led_.set(ledSlowBlink(LedColor::YELLOW));
-    } else {
-        led_.set(ledForStatus(status));
+    if (mode != PollMode::ACTIVE || nfcSignState_ != NfcSignState::IDLE) {
+        return;
     }
+    if (woffuClient_.credentialsInvalid()) {
+        showStatusLed(ledSlowBlink(LedColor::YELLOW));
+    } else {
+        showStatusLed(ledForStatus(status));
+    }
+}
+
+void AppStateMachine::setWoffuStatus(WoffuStatus status) {
+    if (status != lastWoffuStatus_) {
+        remote_.requestStatus();
+    }
+    lastWoffuStatus_ = status;
 }
 
 void AppStateMachine::refreshWorkdayInfo(int yday) {
@@ -578,34 +690,53 @@ void AppStateMachine::handleAutoSign(uint16_t nowMinutes, const struct tm& timei
 void AppStateMachine::attemptAutoSign(bool isEntry) {
     const char* label = isEntry ? "entrada" : "salida";
     logPrintf("Fichaje automatico: hora de %s alcanzada, comprobando estado actual en Woffu...\n", label);
+    String message;
+    SignOutcome outcome = signTowards(isEntry, "automatico", message);
+    remote_.sendEvent(outcome == SignOutcome::SIGNED    ? "sign"
+                      : outcome == SignOutcome::ALREADY ? "info"
+                                                        : "error",
+                      "Fichaje automatico: " + message);
+    // Fuerza un repoll real inmediato para que el LED refleje el resultado
+    // (exito o fallo) sin esperar al siguiente ciclo de polling normal.
+    nextPollAtMs_ = millis();
+}
+
+SignOutcome AppStateMachine::signTowards(bool isEntry, const char* origin, String& message) {
+    const char* label = isEntry ? "entrada" : "salida";
 
     // Se pide el estado real (en vez de fiarse de lastWoffuStatus_, que puede
     // llevar hasta un ciclo de polling desactualizado) justo antes de decidir:
     // como fichar/desfichar es la misma llamada, fiarse de un estado obsoleto
     // podria disparar la accion contraria a la deseada.
     WoffuStatus status = woffuClient_.fetchStatus();
-    lastWoffuStatus_ = status;
+    setWoffuStatus(status);
+    lastPollEpoch_ = time(nullptr);
     logPrintf("Estado Woffu: %s\n", woffuStatusName(status));
 
     if (status == WoffuStatus::UNKNOWN) {
-        logPrintln("Fichaje automatico: no se pudo confirmar el estado actual en Woffu, se omite por seguridad.");
-        return;
+        message = "no se pudo confirmar el estado actual en Woffu, se omite por seguridad.";
+        logPrintf("Fichaje %s: %s\n", origin, message.c_str());
+        return SignOutcome::STATE_UNKNOWN;
     }
 
     bool shouldSign = isEntry ? (status == WoffuStatus::CLOCKED_OUT) : (status == WoffuStatus::CLOCKED_IN);
     if (!shouldSign) {
-        logPrintf("Fichaje automatico: ya estaba fichada la %s, no se hace nada.\n", label);
-        return;
+        message = String("ya estaba fichada la ") + label + ", no se hace nada.";
+        logPrintf("Fichaje %s: %s\n", origin, message.c_str());
+        return SignOutcome::ALREADY;
     }
 
     if (woffuClient_.toggleSign()) {
-        logPrintf("Woffu API: fichaje automatico de %s registrado.\n", label);
-    } else {
-        logPrintf("Woffu API: error al registrar el fichaje automatico de %s.\n", label);
+        message = String("fichaje de ") + label + " registrado.";
+        logPrintf("Woffu API: fichaje %s de %s registrado.\n", origin, label);
+        // Woffu ya ha cambiado de estado; se refleja sin esperar al proximo
+        // poll (que lo confirmara con el estado real).
+        setWoffuStatus(isEntry ? WoffuStatus::CLOCKED_IN : WoffuStatus::CLOCKED_OUT);
+        return SignOutcome::SIGNED;
     }
-    // Fuerza un repoll real inmediato para que el LED refleje el resultado
-    // (exito o fallo) sin esperar al siguiente ciclo de polling normal.
-    nextPollAtMs_ = millis();
+    message = String("error al registrar el fichaje de ") + label + " en Woffu.";
+    logPrintf("Woffu API: error al registrar el fichaje %s de %s.\n", origin, label);
+    return SignOutcome::FAILED;
 }
 
 void AppStateMachine::saveConfigAndReboot(const DeviceConfig& newConfig) {
@@ -618,5 +749,204 @@ void AppStateMachine::updateLedForCurrentState() {
     if (state_ != AppState::PORTAL_WINDOW) {
         return;
     }
-    led_.set(portalClientConnected_ ? ledAllSolid() : ledSlowBlink(LedColor::ALL));
+    setLed(portalClientConnected_ ? ledAllSolid() : ledSlowBlink(LedColor::ALL));
+}
+
+void AppStateMachine::setLed(const LedCommand& command) {
+    if (ledSentValid_ && command.color == lastLedSent_.color && command.mode == lastLedSent_.mode) {
+        return;
+    }
+    led_.set(command);
+    lastLedSent_ = command;
+    ledSentValid_ = true;
+    remote_.requestStatus();
+}
+
+void AppStateMachine::showStatusLed(const LedCommand& command) {
+    statusLed_ = command;
+    statusLedValid_ = true;
+    setLed(overrideActive_ ? override_ : command);
+}
+
+void AppStateMachine::reapplyStatusLed(PollMode mode) {
+    // Solo si ya hay un color de reposo que mostrar (no mientras se esta
+    // cargando, ni fuera de horario, ni durante un feedback NFC: en esos
+    // casos showStatusLed() aplicara el override la proxima vez).
+    if (mode == PollMode::ACTIVE && statusLedValid_ && nfcSignState_ == NfcSignState::IDLE) {
+        setLed(overrideActive_ ? override_ : statusLed_);
+    }
+}
+
+void AppStateMachine::handleRemote(PollMode mode) {
+    if (!remote_.enabled()) {
+        return;
+    }
+    remote_.loop();
+
+    RemoteCommand command;
+    while (remote_.takeCommand(command)) {
+        executeRemoteCommand(command, mode);
+    }
+
+    if (remote_.takeStatusDue()) {
+        publishStatus(mode);
+    }
+}
+
+void AppStateMachine::executeRemoteCommand(const RemoteCommand& command, PollMode mode) {
+    logPrintf("Control remoto: comando '%s' recibido.\n", command.cmd.c_str());
+
+    if (command.cmd == "status") {
+        remote_.requestStatus();
+        remote_.sendAck(command.id, true, "ok");
+    } else if (command.cmd == "refresh") {
+        pollWoffuNow(mode);
+        remote_.requestStatus();
+        remote_.sendAck(command.id, lastWoffuStatus_ != WoffuStatus::UNKNOWN,
+                        String("Estado Woffu: ") + woffuStatusName(lastWoffuStatus_));
+    } else if (command.cmd == "sign_in" || command.cmd == "sign_out") {
+        bool isEntry = command.cmd == "sign_in";
+        String message;
+        SignOutcome outcome = signTowards(isEntry, "remoto", message);
+        bool ok = outcome == SignOutcome::SIGNED || outcome == SignOutcome::ALREADY;
+        remote_.sendAck(command.id, ok, message);
+        if (outcome == SignOutcome::SIGNED) {
+            remote_.sendEvent("sign", "Fichaje remoto: " + message);
+        }
+        // Repoll inmediato para confirmar el estado real (y el LED).
+        nextPollAtMs_ = millis();
+        if (mode != PollMode::ACTIVE) {
+            pollWoffuNow(mode);
+        }
+    } else if (command.cmd == "led_set") {
+        LedCommand wanted;
+        if (!parseOverride(command.color, command.mode, wanted)) {
+            remote_.sendAck(command.id, false, "color/modo no validos");
+            return;
+        }
+        overrideActive_ = true;
+        override_ = wanted;
+        config_.setLedOverride(static_cast<uint8_t>(wanted.color), static_cast<uint8_t>(wanted.mode));
+        logPrintf("Semaforo: color fijo %s (%s) desde el control remoto.\n", ledColorName(wanted.color),
+                  ledModeName(wanted.mode));
+        reapplyStatusLed(mode);
+        remote_.requestStatus();
+        remote_.sendAck(command.id, true, "color fijo aplicado");
+        remote_.sendEvent("led", String("Color fijo: ") + ledColorName(wanted.color) + " (" +
+                                     ledModeName(wanted.mode) + ")");
+    } else if (command.cmd == "led_auto") {
+        overrideActive_ = false;
+        config_.clearLedOverride();
+        logPrintln("Semaforo: vuelta al color automatico desde el control remoto.");
+        reapplyStatusLed(mode);
+        remote_.requestStatus();
+        remote_.sendAck(command.id, true, "modo automatico");
+        remote_.sendEvent("led", "Color automatico (estado de Woffu)");
+    } else if (command.cmd == "reboot") {
+        remote_.sendAck(command.id, true, "reiniciando");
+        logPrintln("Control remoto: reinicio solicitado.");
+        // Unas vueltas de loop() para que el ack y la ultima linea de log
+        // salgan antes de cortar la conexion.
+        for (int i = 0; i < 5; i++) {
+            remote_.loop();
+            delay(100);
+        }
+        ESP.restart();
+    } else if (command.cmd == "ota_update") {
+        String latest;
+        switch (otaUpdater_.checkForUpdate(latest)) {
+            case OtaCheckResult::UP_TO_DATE:
+                remote_.sendAck(command.id, true, String("Ya esta en la ultima version (") + FIRMWARE_VERSION + ").");
+                return;
+            case OtaCheckResult::ERROR:
+                remote_.sendAck(command.id, false, "Error comprobando la actualizacion: " + otaUpdater_.lastErrorDetail());
+                return;
+            case OtaCheckResult::AVAILABLE:
+                break;
+        }
+        remote_.sendAck(command.id, true, String("Actualizando de ") + FIRMWARE_VERSION + " a " + latest +
+                                              "; el dispositivo se reiniciara solo.");
+        logPrintf("OTA remota: actualizando %s -> %s...\n", FIRMWARE_VERSION, latest.c_str());
+        remote_.loop();
+        lastLoggedOtaPercent_ = -1;
+        setLed(ledRotateFast());
+        OtaResult result = otaUpdater_.update(latest);
+        if (result == OtaResult::ERROR) {
+            config_.clearOtaNote();
+            logPrintf("OTA remota: error (%s).\n", otaUpdater_.lastErrorDetail().c_str());
+            remote_.sendEvent("error", "OTA fallida: " + otaUpdater_.lastErrorDetail());
+            nextPollAtMs_ = millis();
+            if (mode == PollMode::ACTIVE) {
+                reapplyStatusLed(mode);
+            } else {
+                setLed(ledOff());
+            }
+        }
+    } else {
+        remote_.sendAck(command.id, false, "comando desconocido: " + command.cmd);
+    }
+}
+
+void AppStateMachine::publishStatus(PollMode mode) {
+    JsonDocument doc;
+    doc["fw"] = FIRMWARE_VERSION;
+    doc["uptime_s"] = millis() / 1000;
+    doc["epoch"] = static_cast<long>(time(nullptr));
+
+    JsonObject wifi = doc["wifi"].to<JsonObject>();
+    wifi["ssid"] = WiFi.SSID();
+    wifi["rssi"] = WiFi.RSSI();
+    wifi["ip"] = wifi_.ipAddress();
+
+    JsonObject heap = doc["heap"].to<JsonObject>();
+    heap["free"] = ESP.getFreeHeap();
+    heap["min_free"] = ESP.getMinFreeHeap();
+    heap["max_alloc"] = ESP.getMaxAllocHeap();
+
+    JsonObject woffu = doc["woffu"].to<JsonObject>();
+    woffu["status"] = woffuStatusCode(lastWoffuStatus_);
+    woffu["credentials_invalid"] = woffuClient_.credentialsInvalid();
+    woffu["last_poll_epoch"] = static_cast<long>(lastPollEpoch_);
+
+    doc["mode"] = mode == PollMode::ACTIVE ? "active" : "off";
+    doc["mode_reason"] = pollModeReason_;
+
+    JsonObject workday = doc["workday"].to<JsonObject>();
+    workday["valid"] = workdayValid_;
+    workday["weekend"] = workdayInfo_.isWeekend;
+    workday["holiday"] = workdayInfo_.isHoliday;
+
+    const DeviceConfig& cfg = config_.get();
+    JsonObject window = doc["window"].to<JsonObject>();
+    window["start"] = minutesToHhMm(cfg.activeWindow.startMinutes);
+    window["end"] = minutesToHhMm(cfg.activeWindow.endMinutes);
+
+    if (ledSentValid_) {
+        ledToJson(doc["led"].to<JsonObject>(), lastLedSent_);
+    }
+    if (statusLedValid_) {
+        ledToJson(doc["led_auto"].to<JsonObject>(), statusLed_);
+    }
+    if (overrideActive_) {
+        ledToJson(doc["override"].to<JsonObject>(), override_);
+    } else {
+        doc["override"] = nullptr;
+    }
+
+    JsonObject nfc = doc["nfc"].to<JsonObject>();
+    nfc["reader"] = nfcReaderOk_;
+    nfc["card"] = config_.hasLearnedCard();
+
+    JsonObject autoSign = doc["auto_sign"].to<JsonObject>();
+    autoSign["enabled"] = cfg.autoSignEnabled;
+    time_t now = time(nullptr);
+    struct tm timeinfo;
+    localtime_r(&now, &timeinfo);
+    if (timeinfo.tm_wday >= 1 && timeinfo.tm_wday <= 5) {
+        const TimeWindow& today = cfg.autoSignSchedule[timeinfo.tm_wday - 1];
+        autoSign["today_start"] = minutesToHhMm(today.startMinutes);
+        autoSign["today_end"] = minutesToHhMm(today.endMinutes);
+    }
+
+    remote_.sendStatus(doc);
 }

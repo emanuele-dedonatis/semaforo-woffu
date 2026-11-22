@@ -30,6 +30,11 @@ struct DeviceConfig {
         TimeWindow(510, 990),  // Jueves
         TimeWindow(510, 840),  // Viernes
     };
+
+    // Control remoto (RemoteLink): URL del endpoint WebSocket del servidor,
+    // p.ej. "wss://woffu.ededona.es/ws/device". Vacia = deshabilitado (por
+    // defecto). Ver Arquitectura.md, `## Control remoto`.
+    String remoteUrl;
 };
 
 class Config {
@@ -54,7 +59,19 @@ public:
     String learnedCardUid() const;
     void setLearnedCardUid(const String& uidHex);
 
+    // Color fijo del semaforo impuesto desde el control remoto, que sustituye
+    // al color automatico (estado de Woffu) hasta que se vuelva a poner en
+    // automatico, sobreviviendo a reinicios. Mismo patron que nfc_uid: fuera
+    // de DeviceConfig, sin reboot, cacheado en RAM. Se guardan los valores
+    // crudos de LedColor/LedMode para no acoplar Config a LedController.
+    bool ledOverride(uint8_t& color, uint8_t& mode) const;
+    void setLedOverride(uint8_t color, uint8_t mode);
+    void clearLedOverride();
+
 private:
     DeviceConfig current_;
     String learnedCardUid_;
+    bool hasLedOverride_ = false;
+    uint8_t ledOverrideColor_ = 0;
+    uint8_t ledOverrideMode_ = 0;
 };

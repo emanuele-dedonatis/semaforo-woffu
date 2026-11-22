@@ -11,6 +11,11 @@
 #include "net/WoffuClient.h"
 #include "net/OtaUpdater.h"
 #include "nfc/NfcReader.h"
+#include "net/RemoteLink.h"
+
+// Resultado de intentar llevar el fichaje en Woffu a un sentido concreto
+// (entrada o salida), comun al fichaje automatico y al remoto.
+enum class SignOutcome : uint8_t { SIGNED, ALREADY, STATE_UNKNOWN, FAILED };
 
 enum class AppState : uint8_t {
     INIT,
@@ -37,6 +42,24 @@ private:
     void refreshWorkdayInfo(int yday);
     void handleAutoSign(uint16_t nowMinutes, const struct tm& timeinfo);
     void attemptAutoSign(bool isEntry);
+    SignOutcome signTowards(bool isEntry, const char* origin, String& message);
+    void pollWoffuNow(PollMode mode);
+    void setWoffuStatus(WoffuStatus status);
+
+    // Todas las salidas a los LEDs pasan por setLed(), que descarta los
+    // comandos repetidos (LedController reinicia la fase del parpadeo con
+    // cada comando) y avisa al control remoto del cambio. showStatusLed() es
+    // el color "de reposo" en RUNNING (estado de Woffu o error), que el color
+    // fijo remoto (override) sustituye; los feedbacks transitorios (NFC) van
+    // directos a setLed().
+    void setLed(const LedCommand& command);
+    void showStatusLed(const LedCommand& command);
+    void reapplyStatusLed(PollMode mode);
+
+    // Control remoto (RemoteLink), solo en RUNNING con WiFi+hora.
+    void handleRemote(PollMode mode);
+    void executeRemoteCommand(const RemoteCommand& command, PollMode mode);
+    void publishStatus(PollMode mode);
 
     AppState state_ = AppState::INIT;
     uint32_t connectingDeadlineMs_ = 0;
@@ -66,6 +89,17 @@ private:
     WoffuClient woffuClient_;
     OtaUpdater otaUpdater_;
     NfcReader nfcReader_;
+    RemoteLink remote_;
+    bool nfcReaderOk_ = false;
+    String pollModeReason_;
+    time_t lastPollEpoch_ = 0;
+
+    LedCommand lastLedSent_;
+    bool ledSentValid_ = false;
+    LedCommand statusLed_;
+    bool statusLedValid_ = false;
+    bool overrideActive_ = false;
+    LedCommand override_;
 
     // Aprendizaje de tarjeta NFC (solo dentro de PORTAL_WINDOW).
     bool nfcLearnActive_ = false;

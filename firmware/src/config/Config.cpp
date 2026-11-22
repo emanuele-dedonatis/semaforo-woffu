@@ -16,6 +16,12 @@ void Config::begin() {
     current_.activeWindow.startMinutes = prefs.getUShort("win_s", 450);
     current_.activeWindow.endMinutes = prefs.getUShort("win_e", 1140);
     learnedCardUid_ = prefs.getString("nfc_uid", "");
+    current_.remoteUrl = prefs.getString("rem_url", "");
+    // led_ovr: 0 = sin override; si no, 0x80 | (color << 4) | mode (ver setLedOverride()).
+    uint8_t ovr = prefs.getUChar("led_ovr", 0);
+    hasLedOverride_ = ovr != 0;
+    ledOverrideColor_ = (ovr >> 4) & 0x07;
+    ledOverrideMode_ = ovr & 0x0F;
 
     current_.autoSignEnabled = prefs.getBool("as_en", false);
     for (int i = 0; i < 5; i++) {
@@ -49,6 +55,7 @@ bool Config::save(const DeviceConfig& config) {
     prefs.putUShort("win_s", config.activeWindow.startMinutes);
     prefs.putUShort("win_e", config.activeWindow.endMinutes);
 
+    prefs.putString("rem_url", config.remoteUrl);
     prefs.putBool("as_en", config.autoSignEnabled);
     for (int i = 0; i < 5; i++) {
         char keyStart[8];
@@ -120,6 +127,37 @@ void Config::setLearnedCardUid(const String& uidHex) {
     learnedCardUid_ = uidHex;
 }
 
+bool Config::ledOverride(uint8_t& color, uint8_t& mode) const {
+    if (!hasLedOverride_) {
+        return false;
+    }
+    color = ledOverrideColor_;
+    mode = ledOverrideMode_;
+    return true;
+}
+
+void Config::setLedOverride(uint8_t color, uint8_t mode) {
+    Preferences prefs;
+    if (prefs.begin(kNamespace, false)) {
+        // El bit fijo 0x80 garantiza que el valor guardado nunca sea 0 (= sin
+        // override) aunque color y mode sean ambos 0 (LedColor::OFF/LedMode::OFF).
+        prefs.putUChar("led_ovr", static_cast<uint8_t>(0x80 | ((color & 0x07) << 4) | (mode & 0x0F)));
+        prefs.end();
+    }
+    hasLedOverride_ = true;
+    ledOverrideColor_ = color & 0x07;
+    ledOverrideMode_ = mode & 0x0F;
+}
+
+void Config::clearLedOverride() {
+    Preferences prefs;
+    if (prefs.begin(kNamespace, false)) {
+        prefs.remove("led_ovr");
+        prefs.end();
+    }
+    hasLedOverride_ = false;
+}
+
 void Config::factoryReset() {
     Preferences prefs;
     if (prefs.begin(kNamespace, false)) {
@@ -128,4 +166,5 @@ void Config::factoryReset() {
     }
     current_ = DeviceConfig{};
     learnedCardUid_ = "";
+    hasLedOverride_ = false;
 }
