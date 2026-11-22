@@ -1,10 +1,8 @@
 # Tools
 
-Scripts auxiliares de desarrollo, no forman parte del firmware.
+Scripts auxiliares de desarrollo para verificar la API de Woffu, no forman parte del firmware.
 
-## `dev_version.py`
-
-Hook de PlatformIO (`extra_scripts` en `platformio.ini`), no se ejecuta a mano. Embebe `FIRMWARE_VERSION` en builds locales a partir de git (`<último tag con patch+1>-dev.<hash corto>`); se salta si el build ya trae la versión fijada por `PLATFORMIO_BUILD_FLAGS` (caso de `tools/build_firmware.sh` en release). Ver `## OTA — detalle de implementación` en [Arquitectura.md](../Arquitectura.md).
+Los scripts de build del firmware están en [`firmware/tools/`](../firmware/tools): `build_firmware.sh` (build de release, lo invoca semantic-release) y `dev_version.py` (hook de PlatformIO que embebe `FIRMWARE_VERSION` en builds locales a partir de git, ver `## OTA — detalle de implementación` en [Arquitectura.md](../Arquitectura.md)). El simulador del dispositivo para probar el servidor de control remoto está en [`server/tools/`](../server/tools).
 
 ## `check_status.py`
 

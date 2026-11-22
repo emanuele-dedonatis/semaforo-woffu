@@ -57,34 +57,49 @@ Comunicación:
 
 `logPrintf()`/`logPrintln()` son sustitutos directos de `Serial.printf()`/`Serial.println()` — usados en todo el firmware en vez de `Serial` para que cada línea del log lleve un timestamp `[HH:MM:SS]` (hora local, una vez que `TimeSync` ha sincronizado por NTP; ver `kNtpSyncedThreshold` en `TimeSync.h`) o `[+Ns]` (segundos desde el arranque, mientras todavía no hay hora sincronizada — arranque, portal de configuración, fallos de red antes de conectar). Solo `Serial.begin()` en `main.cpp` sigue llamando a `Serial` directamente.
 
-## Estructura del proyecto (PlatformIO)
+## Estructura del proyecto
+
+El repo tiene dos partes: el firmware (`firmware/`, proyecto PlatformIO) y el servidor de control remoto (`server/`, backend + web app que corre en una Raspberry, ver `## Control remoto`). Los documentos de diseño (`Requisitos.md`, `Arquitectura.md`, `Plan.md`) y los scripts de verificación de la API de Woffu (`tools/`) quedan en la raíz. Solo los cambios en `firmware/` publican release (ver `## CI/CD`).
 
 ```
-platformio.ini
-partitions.csv
-src/
-  main.cpp                 # setup()/loop(), arranque de tareas
-  Log.{h,cpp}               # logPrintf()/logPrintln(): sustituyen a Serial.printf()/println() anteponiendo timestamp
-  app/
-    AppStateMachine.{h,cpp}   # estados de arriba, orquestación
-    Scheduler.{h,cpp}         # ventana encendido/apagado + jornada Woffu → modo activo/pasivo/off
-  config/
-    Config.{h,cpp}            # struct + wrapper sobre Preferences (NVS)
-  net/
-    WifiManager.{h,cpp}
-    TimeSync.{h,cpp}          # zona horaria por geolocalizacion de IP + NTP (configTime)
-    WoffuClient.{h,cpp}       # llamadas a la API de Woffu
-    OtaUpdater.{h,cpp}        # HTTPUpdate contra GitHub Releases
-    CertBundle.{h,cpp}        # adjunta el bundle de CAs embebido a un WiFiClientSecure
-  web/
-    ProvisioningPortal.{h,cpp} # AP WiFi + DNS captivo + servidor HTTP con el formulario
-  led/
-    LedController.{h,cpp}     # LedTask, GPIO digital on/off, patrones de parpadeo
-  nfc/
-    NfcReader.{h,cpp}         # lector PN532 (SPI), polling edge-triggered para fichaje por NFC
-data/
-  cert/x509_crt_bundle.bin  # bundle de CAs de Mozilla, vendorizado (ver sección TLS)
+firmware/
+  platformio.ini
+  tools/
+    build_firmware.sh        # build de release (CI), ver ## CI/CD
+    dev_version.py           # hook de PlatformIO: FIRMWARE_VERSION en builds locales
+  src/
+    main.cpp                 # setup()/loop(), arranque de tareas
+    Log.{h,cpp}               # logPrintf()/logPrintln(): sustituyen a Serial.printf()/println() anteponiendo timestamp; historial circular para el control remoto
+    app/
+      AppStateMachine.{h,cpp}   # estados de arriba, orquestación
+      Scheduler.{h,cpp}         # ventana encendido/apagado + jornada Woffu → modo activo/pasivo/off
+    config/
+      Config.{h,cpp}            # struct + wrapper sobre Preferences (NVS)
+      DeviceIdentity.{h,cpp}    # nombre (Semaforo-XXXXXX) y password del dispositivo, derivados de la MAC
+    net/
+      WifiManager.{h,cpp}
+      TimeSync.{h,cpp}          # zona horaria por geolocalizacion de IP + NTP (configTime)
+      WoffuClient.{h,cpp}       # llamadas a la API de Woffu
+      OtaUpdater.{h,cpp}        # HTTPUpdate contra GitHub Releases
+      CertBundle.{h,cpp}        # adjunta el bundle de CAs embebido a un WiFiClientSecure
+      RemoteLink.{h,cpp}        # cliente WebSocket (wss) hacia el servidor de control remoto
+    web/
+      ProvisioningPortal.{h,cpp} # AP WiFi + DNS captivo + servidor HTTP con el formulario
+    led/
+      LedController.{h,cpp}     # LedTask, GPIO digital on/off, patrones de parpadeo
+    nfc/
+      NfcReader.{h,cpp}         # lector PN532 (SPI), polling edge-triggered para fichaje por NFC
+  data/
+    cert/x509_crt_bundle.bin  # bundle de CAs de Mozilla, vendorizado (ver sección TLS)
+
+server/
+  app.py                    # backend aiohttp: /ws/device, /ws/ui, login, web app
+  static/                   # web app (HTML/CSS/JS sin dependencias)
+  tools/fake_device.py      # simulador del dispositivo (mismo protocolo)
+  Dockerfile, docker-compose.yml, deploy.sh, .env.example
 ```
+
+`platform` está fijada a `espressif32 @ ^6.9.0` (arduino-esp32 2.0.x / ESP-IDF 4.4) en `platformio.ini`: sin fijar, PlatformIO resuelve la última (8.x, arduino-esp32 3.x), que cambia la API de TLS (`setCACertBundle()` con tamaño) y el formato del cert bundle vendorizado, y el firmware no compila. Migrar a 3.x es un trabajo aparte (regenerar el bundle con el `gen_crt_bundle.py` de IDF 5, adaptar `CertBundle`).
 
 ## Partition table
 
@@ -103,10 +118,11 @@ Namespace `cfg`:
 | `win_s`/`win_e` | uint16 (minutos del día) | `450,1140` (07:30–19:00) |
 | `as_en` | bool | `false` (fichaje automático deshabilitado) |
 | `as_s0`..`as_s4`/`as_e0`..`as_e4` | uint16 (minutos del día) | horario de entrada/salida por día laborable, índice 0=lunes..4=viernes (ver `## Fichaje automático por horario`) |
+| `rem_url` | string | `wss://woffu.ededona.es/ws/device` (vacío = control remoto deshabilitado, por defecto; ver `## Control remoto`) |
 
 Los ritmos de polling (activo ~60s, pasivo ~900s) ya no son configurables: son constantes fijas en `Scheduler.cpp` (ver `## Cliente Woffu` y `## Scheduler`). El brillo tampoco: los LEDs son GPIO digital on/off, siempre al máximo, ver `## LED Controller`.
 
-Fuera de `DeviceConfig`, en el mismo namespace `cfg`, hay dos notas adicionales que no requieren el ciclo completo de guardado+reboot: `ota_from`/`ota_to` (ver `## OTA — detalle de implementación`) y `nfc_uid` (string, UID en hex de la tarjeta NFC aprendida — ver `## NFC Reader`; a diferencia de la nota de OTA, esta no se consume al leerla, se cachea en RAM y se usa en cada tap de tarjeta). `factoryReset()` (`prefs.clear()`) borra también `nfc_uid`.
+Fuera de `DeviceConfig`, en el mismo namespace `cfg`, hay dos notas adicionales que no requieren el ciclo completo de guardado+reboot: `ota_from`/`ota_to` (ver `## OTA — detalle de implementación`) y `nfc_uid` (string, UID en hex de la tarjeta NFC aprendida — ver `## NFC Reader`; a diferencia de la nota de OTA, esta no se consume al leerla, se cachea en RAM y se usa en cada tap de tarjeta), y `led_ovr` (uint8, color fijo puesto desde el control remoto: `0x80 | (LedColor << 4) | LedMode`, ausente = automático; ver `## Control remoto`). `factoryReset()` (`prefs.clear()`) borra también `nfc_uid` y `led_ovr`.
 
 **Sin cifrado de NVS para el MVP**: cifrar de verdad el contenido de NVS en el ESP32 requiere activar *flash encryption* a nivel de eFuse (paso de fábrica/primer flasheo, irreversible en modo *release*, y que complica el flujo de OTA con firmas/cifrado de imágenes). Queda descartado para el MVP; la config permanece protegida solo por la password del AP de configuración. Se anota como posible mejora futura opcional para quien quiera más hardening.
 
@@ -283,7 +299,7 @@ Sin reintentos ante fallo (mismo criterio que el resto del firmware): si la geol
 - URL estable de GitHub Releases: `https://github.com/emanuele-dedonatis/semaforo-woffu/releases/latest/download/firmware.bin` — siempre apunta al asset de la última release, sin necesidad de llamar a la API de GitHub ni parsear JSON.
 - Antes de descargar el `.bin` (varios cientos de KB/pocos MB), descargar primero un asset pequeño `version.txt` de la misma release y compararlo con la versión actual (embebida en el firmware) — si coincide, no hace falta bajar el binario entero.
 - Validación TLS: certificate bundle, ver `## Certificate bundle (TLS)`.
-- La versión actual del firmware se embebe en tiempo de compilación con el build flag `FIRMWARE_VERSION` (p.ej. `-D FIRMWARE_VERSION=\"1.4.0\"`), inyectado por `tools/build_firmware.sh` durante el release (ver `## CI/CD`). En builds locales (`pio run`/`pio run -t upload` sin pasar por CI), `platformio.ini` engancha `extra_scripts = pre:tools/dev_version.py`, que calcula una versión identificable a partir de git — `<último tag con patch+1>-dev.<hash corto>` (identificador de pre-release semver; p.ej. si el último tag es `v1.1.2` y `HEAD` está en `31a304b`, produce `1.1.3-dev.31a304b`) — y solo si `FIRMWARE_VERSION` no viene ya fijado por `PLATFORMIO_BUILD_FLAGS` (para no pisar ni duplicar el de un build de release). Si no hay tags o `git` no está disponible, no define nada y `Version.h` cae al fallback `"0.0.0-dev"` vía `#ifndef`.
+- La versión actual del firmware se embebe en tiempo de compilación con el build flag `FIRMWARE_VERSION` (p.ej. `-D FIRMWARE_VERSION=\"1.4.0\"`), inyectado por `firmware/tools/build_firmware.sh` durante el release (ver `## CI/CD`). En builds locales (`pio run`/`pio run -t upload` sin pasar por CI), `platformio.ini` engancha `extra_scripts = pre:tools/dev_version.py` (`firmware/tools/dev_version.py`), que calcula una versión identificable a partir de git — `<último tag con patch+1>-dev.<hash corto>` (identificador de pre-release semver; p.ej. si el último tag es `v1.1.2` y `HEAD` está en `31a304b`, produce `1.1.3-dev.31a304b`) — y solo si `FIRMWARE_VERSION` no viene ya fijado por `PLATFORMIO_BUILD_FLAGS` (para no pisar ni duplicar el de un build de release). Si no hay tags o `git` no está disponible, no define nada y `Version.h` cae al fallback `"0.0.0-dev"` vía `#ifndef`.
 - Tras un flasheo OTA correcto, `HTTPUpdate` deja marcado el nuevo slot como boot y reinicia solo.
 - Las URLs `releases/latest/download/*` de GitHub responden con **redirecciones 302** (hacia la release concreta y de ahí al CDN `objects.githubusercontent.com`). Tanto `HTTPClient` como `HTTPUpdate` traen las redirecciones **desactivadas por defecto**, así que hay que activarlas explícitamente con `setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS)` en ambos (comprobación de `version.txt` y descarga de `firmware.bin`); sin esto, la comprobación y la descarga fallan siempre con el código HTTP de la redirección en vez de dar el resultado real.
 - `OtaUpdater::lastErrorDetail()` guarda el motivo concreto del último fallo (código HTTP o `HTTPClient::errorToString()` para la comprobación de versión, `httpUpdate.getLastErrorString()` para la descarga/instalación), que el orquestador vuelca por Serial y en el portal (`ProvisioningPortal::reportOtaError()`).
@@ -352,14 +368,75 @@ Alternativa al fichaje por NFC para quien no tiene lector: en vez de una tarjeta
 
 `GET /` añade, dentro del mismo `<form>` de `/save`, una casilla `auto_sign_enabled` y 5 filas (una por día laborable, `renderAutoSignScheduleHtml()`) con dos `<input type="time">` cada una (`auto_<día>_start`/`auto_<día>_end`, con `<día>` = `lu`/`ma`/`mi`/`ju`/`vi`) — mismo patrón de controles nativos que el resto del formulario, sin JavaScript. `POST /save` (`handleSave()`) valida los 10 campos con el mismo `parseHhMm()` que ya usa el par Encendido/Apagado; un fallo de parseo en cualquiera de ellos devuelve el mismo error 400 genérico que el resto de campos inválidos.
 
+## Control remoto
+
+El dispositivo puede conectarse a un servidor propio (en casa, detrás de un reverse proxy con TLS) para verlo y manejarlo a distancia desde una web app: estado en Woffu, color real del semáforo, fichar entrada/salida, poner un color fijo, log en vivo, reiniciar, OTA. Deshabilitado por defecto (campo `rem_url` vacío).
+
+```
+ESP32 (oficina) ──wss /ws/device──▶ nginx :443 ──▶ server/app.py (127.0.0.1:8095) ◀──wss /ws/ui── navegador
+```
+
+La conexión la abre **el dispositivo** (saliente, puerto 443): en la oficina no hay que abrir nada, y basta con que salga a internet como ya hace con Woffu/GitHub.
+
+### Identidad y autenticación
+
+- El dispositivo se identifica con su nombre (`Semaforo-XXXXXX`, el SSID del portal) y la password de 8 dígitos de ese mismo AP (`DeviceIdentity`, derivadas de la MAC; antes vivían dentro de `ProvisioningPortal::begin()`), enviadas como HTTP Basic en el handshake del WebSocket.
+- Esa misma pareja es el usuario/password de la web app (decisión de diseño: una única credencial que el usuario ya conoce). El servidor no la deriva: la lista de dispositivos autorizados va en su configuración (`DEVICES=Nombre:password`).
+- **Riesgo conocido**: la password es una función pública (este repo) de la MAC, y el SSID lleva los 3 últimos bytes; los 3 primeros son un OUI de Espressif (pocas decenas de valores). Quien haya visto el SSID del portal y conozca el código puede calcular la password en pocos intentos. Mitigado en el servidor con un límite de intentos por IP (5 fallos / 15 min), pero no resuelto: la solución de fondo sería una password propia configurable en el portal (o una sal secreta por dispositivo), lo que cambiaría también la del AP.
+
+### `RemoteLink` (`firmware/src/net/RemoteLink.{h,cpp}`)
+
+- Cliente WebSocket sobre TLS con `links2004/WebSockets` (`beginSslWithBundle()`, mismo cert bundle que Woffu/OTA vía `certBundle()`).
+- Solo transporta: no decide nada. Los comandos recibidos se encolan (máx. 4) y `AppStateMachine` los saca con `takeCommand()`, mismo patrón "bandera que se consume" que `ProvisioningPortal`.
+- Se crea en `enterRunning()` (`begin()`) pero no conecta hasta la primera vuelta con WiFi **y** hora NTP (sin hora la validación TLS falla, igual que con GitHub). Nunca durante `CONNECTING`/`PORTAL_WINDOW`.
+- Sin tarea propia: `loop()` se bombea desde `loopTask` en `handleRunning()`. Único punto bloqueante: el handshake TCP+TLS de cada intento de conexión (TCP con timeout de 5s). Por eso los reintentos se espacian según cuánto lleva caído: cada 5s el primer minuto, cada 30s hasta 10 min, luego cada 2 min.
+- Heartbeat: ping cada 25s, desconexión tras 2 pongs perdidos (10s de margen cada uno). El servidor tiene además su propio heartbeat (40s) para detectar conexiones muertas sin cierre limpio, y nginx un `proxy_read_timeout` de 120s.
+- **Log remoto**: `Log.cpp` guarda las últimas 32 líneas (máx. 200 caracteres) en un buffer circular numerado (`logLastSeq()`/`logForEachSince()`). `RemoteLink` manda en cada vuelta las líneas nuevas desde la última enviada (en lotes de hasta 16), así que al conectar llega también lo que quede del arranque. Sin callbacks dentro de `logPrintf()`: evita reentradas si el propio envío loguea algo. Siempre activo (son pocas líneas por minuto); el servidor guarda las últimas 1500 para la pestaña Debug.
+
+### Protocolo (JSON sobre texto)
+
+Dispositivo → servidor:
+
+| `type` | Cuándo | Contenido |
+|---|---|---|
+| `hello` | al conectar | `name`, `fw`, `reset_reason` (`esp_reset_reason()`: power-on, panic, brownout…) |
+| `status` | al conectar, en cada cambio relevante (`requestStatus()`: LED, estado Woffu, modo, override) y cada 60s | `fw`, `uptime_s`, `epoch`, `wifi{ssid,rssi,ip}`, `heap{free,min_free,max_alloc}`, `woffu{status: in/out/unknown, credentials_invalid, last_poll_epoch}`, `mode` (active/off), `mode_reason`, `workday{valid,weekend,holiday}`, `window{start,end}`, `led{color,mode}` (lo que muestra de verdad), `led_auto` (lo que mostraría sin override), `override` (null o `{color,mode}`), `nfc{reader,card}`, `auto_sign{enabled,today_start,today_end}` |
+| `event` | fichajes (NFC, automático, remoto), cambios de color fijo, errores, progreso OTA | `kind` (sign/led/nfc/ota/error/info), `msg` |
+| `log` | líneas nuevas del log | `lines: [[seq, "[HH:MM:SS] ..."], ...]` |
+| `ack` | respuesta a cada comando | `id`, `ok`, `msg` |
+
+Servidor → dispositivo: `{"type":"cmd","id":"…","cmd":…}` con `cmd`:
+
+- `sign_in` / `sign_out`: `signTowards()` — la misma lógica que el fichaje automático (que ahora también la usa): consulta el estado real en Woffu y solo llama a `toggleSign()` si hace falta; con estado `UNKNOWN` no ficha. Funciona también fuera de la ventana de encendido (p.ej. desfichar a distancia si se olvidó al salir).
+- `refresh`: consulta Woffu ya (`pollWoffuNow()`, también fuera de horario).
+- `led_set` (`color`: red/yellow/green/all/off, `mode`: solid/blink_slow/blink_fast) / `led_auto`: ver abajo.
+- `reboot`, `ota_update` (comprueba `version.txt` y, si hay versión nueva, instala; el progreso sale como eventos `ota`), `status` (fuerza un `status`).
+
+El servidor añade un `id` por comando, rechaza los que no están en su lista cerrada y caduca los que no reciben `ack` en 90s.
+
+### Color fijo (override)
+
+Para que quien mire el semáforo no vea el estado real. Persistente en NVS (`led_ovr`) hasta que se vuelve a automático, también tras reiniciar.
+
+- Todas las salidas a LEDs de `AppStateMachine` pasan ahora por `setLed()`, que descarta comandos repetidos (antes `handleRunning()` reenviaba `ledOff()` en cada vuelta) y avisa a `RemoteLink` de cada cambio real.
+- `showStatusLed()` es el color "de reposo" en `RUNNING` (estado de Woffu, error de credenciales, error de WiFi): guarda el color automático en `statusLed_` y muestra el override en su lugar si lo hay. `reapplyStatusLed()` lo vuelve a aplicar al poner/quitar el override.
+- No sustituye a los indicadores transitorios (rotación mientras carga, feedback de un tap NFC: no revelan el estado) ni al apagado fuera de horario/festivo (ahí no hay estado que ocultar).
+
+### Servidor (`server/`)
+
+- `app.py`: un único proceso `aiohttp`. Estado en memoria por dispositivo (`DeviceHub`): último `hello`/`status`, últimos 200 eventos y 1500 líneas de log, navegadores conectados y comandos pendientes. Se pierde al reiniciar; el dispositivo lo reenvía al reconectar. Una conexión nueva del mismo dispositivo cierra la anterior.
+- Web app (`static/`): HTML/CSS/JS sin dependencias ni build, pensada para el móvil (manifest instalable). Al abrir, el servidor manda un `snapshot` completo; después, `status`/`event`/`log`/`presence`/`ack` en vivo. Cada comando lleva un `rid` generado por la página para casar el `ack` con su botón.
+- Login con formulario (`/login`), cookie firmada con HMAC (incluye la password: cambiarla invalida las sesiones), `HttpOnly`/`Secure`/`SameSite=Strict`, 30 días. `/ws/ui` comprueba la cookie y el `Origin`.
+- Despliegue: Docker en la Raspberry escuchando solo en `127.0.0.1:8095`; nginx (repo `infra`, `websockets: true`) publica `https://woffu.ededona.es`. Detalle en `server/README.md`.
+
 ## CI/CD — release y publicación del firmware
 
 Repo: [emanuele-dedonatis/semaforo-woffu](https://github.com/emanuele-dedonatis/semaforo-woffu).
 
-El versionado y la publicación de releases se automatizan con **semantic-release**, apoyándose en los Conventional Commits (ver `CLAUDE.md`), en un workflow de GitHub Actions disparado en push a `main`:
+El versionado y la publicación de releases se automatizan con **semantic-release**, apoyándose en los Conventional Commits (ver `CLAUDE.md`), en un workflow de GitHub Actions disparado en push a `main` **solo si el push toca `firmware/`** (o la propia configuración de release: workflow, `.releaserc.json`, `package.json`). Los cambios en `server/` o en la documentación no publican firmware. Como semantic-release analiza todos los commits desde el último tag (no solo los de `firmware/`), además `.releaserc.json` ignora los commits con scope `server` o `infra` (`releaseRules` con `release: false`): un `feat(server): …` no sube la versión del firmware aunque se publique junto a un cambio de firmware.
 
 1. `semantic-release` analiza los commits desde el último release. Si no hay `feat`/`fix`/breaking changes (p.ej. solo `docs`/`chore`), no genera release nuevo — no hay build de firmware de por medio.
-2. Si toca versión nueva, antes de publicar (plugin `exec`, hook `prepareCmd`) se ejecuta `tools/build_firmware.sh ${nextRelease.version}`, que:
+2. Si toca versión nueva, antes de publicar (plugin `exec`, hook `prepareCmd`) se ejecuta `firmware/tools/build_firmware.sh ${nextRelease.version}` (desde la raíz del repo), que:
    - escribe `version.txt` con el número de versión calculado;
    - lanza `pio run -e esp32dev` pasando ese número como build flag `FIRMWARE_VERSION` (vía la variable de entorno `PLATFORMIO_BUILD_FLAGS`, para no tocar `platformio.ini` en cada release);
    - copia el binario resultante a `firmware.bin` en la raíz del repo.
@@ -369,7 +446,7 @@ Piezas concretas:
 
 - `package.json` — `devDependencies` con `semantic-release` y los plugins usados (`commit-analyzer`, `release-notes-generator`, `exec`, `github`); no se usa `@semantic-release/npm` (no se publica a ningún registro npm).
 - `.releaserc.json` — configuración de los plugins anteriores, en el orden en que corren.
-- `tools/build_firmware.sh` — script de build descrito arriba, ejecutable también en local para probar un build "de release" sin depender de CI.
+- `firmware/tools/build_firmware.sh` — script de build descrito arriba, ejecutable también en local para probar un build "de release" sin depender de CI.
 - `.github/workflows/release.yml` — job único en `ubuntu-latest`, disparado en push a `main`: checkout con `fetch-depth: 0` (semantic-release necesita el historial completo/tags), setup de Node y de Python+PlatformIO, `npm install`, y `npx semantic-release` con `GITHUB_TOKEN` (el token por defecto del workflow, con permiso `contents: write` para crear el Release).
 
 ## Estado

@@ -1,6 +1,13 @@
 # Semáforo Woffu
 
-Firmware para un dispositivo ESP32 que muestra visualmente el estado de fichaje de [Woffu](https://woffu.com/) mediante un semáforo LED: 🔴 no fichado, 🟢 fichado, 🟡 estado desconocido. Opcionalmente permite fichar/desfichar acercando una tarjeta NFC (lector PN532), o automáticamente según un horario configurable por día laborable.
+Firmware para un dispositivo ESP32 que muestra visualmente el estado de fichaje de [Woffu](https://woffu.com/) mediante un semáforo LED: 🔴 no fichado, 🟢 fichado, 🟡 estado desconocido. Opcionalmente permite fichar/desfichar acercando una tarjeta NFC (lector PN532), automáticamente según un horario configurable por día laborable, o a distancia desde una web app servida por un servidor propio al que el dispositivo se conecta por WebSocket (control remoto, ver [server/README.md](server/README.md)).
+
+## Estructura del repo
+
+- [`firmware/`](firmware) — proyecto PlatformIO del ESP32 (`cd firmware && pio run -t upload`).
+- [`server/`](server) — servidor de control remoto: backend Python (`aiohttp`) + web app, en Docker.
+- [`tools/`](tools) — scripts de verificación de la API de Woffu.
+- `Requisitos.md`, `Arquitectura.md`, `Plan.md` — documentación de diseño.
 
 ## Hardware
 
@@ -43,6 +50,7 @@ Los breakouts PN532 suelen tener un jumper/switch para elegir el modo (HSU/I2C/S
   - **Amarillo parpadeando** — fallo persistente que sí depende de la configuración y requiere revisarla desde el portal: no se ha podido conectar a la WiFi configurada (SSID/password incorrectos), o Woffu rechaza el usuario/password configurados.
 - Las actualizaciones OTA se comprueban solas en cuanto el dispositivo tiene WiFi y hora sincronizada (sin depender de que nadie abra la página del portal): la página muestra si el firmware está al día o si hay una versión nueva, y en ese caso ofrece un botón para instalarla. El pipeline de CI publica una nueva versión en GitHub Releases automáticamente al hacer push a `main`.
 - **Fichaje por NFC** (si hay una tarjeta aprendida, ver `## Configuración`): mientras el dispositivo está encendido (no con el semáforo apagado), el lector NFC escucha continuamente. Al acercar una tarjeta los LEDs rotan rápido; si el UID no coincide con la aprendida, el rojo parpadea rápido unos segundos; si coincide, el verde parpadea rápido y se llama a la API de Woffu para fichar o desfichar (según el último estado conocido) — si esa llamada falla, el ámbar parpadea rápido en su lugar. Hay que retirar la tarjeta antes de que un nuevo tap se procese de nuevo.
+- **Control remoto** (deshabilitado por defecto, ver `## Configuración`): en modo normal el dispositivo mantiene una conexión WebSocket (wss) con el servidor configurado, al que manda su estado, eventos y log, y del que recibe comandos. Desde la web app se puede ver el estado, fichar entrada/salida (comprobando antes el estado real, como el fichaje automático), poner un **color fijo** que oculta el estado real (persistente hasta volver a automático, también tras reiniciar), reiniciar, actualizar el firmware y ver el log en vivo. Detalle en [server/README.md](server/README.md).
 - **Fichaje automático por horario** (deshabilitado por defecto, ver `## Configuración`): si está activo, al llegar la hora de entrada configurada de un día laborable se ficha automáticamente (si no se estaba fichado ya), y a la de salida se desficha (si se estaba fichado) — comprobando siempre el estado real y actualizado en Woffu justo antes de fichar, para no fichar dos veces y acabar en el sentido contrario al esperado. Si Woffu marca el día como festivo o fin de semana, ese día se omite.
 
 ## Configuración
@@ -55,6 +63,7 @@ Al arrancar sin datos guardados (o tras un "Restablecer de fábrica"), el dispos
 - **Usuario Woffu / Password Woffu** — credenciales de la cuenta de Woffu cuyo estado de fichaje se consulta.
 - **Encendido / Apagado** — franja horaria en la que el semáforo está activo y sondea Woffu; fuera de ella los LEDs se apagan (ver `Scheduler` en [Arquitectura.md](Arquitectura.md)).
 - **Fichaje automático** — casilla para activarlo (desactivado por defecto) y, debajo, un horario de entrada/salida por cada día laborable (lunes 08:30-16:30... viernes 08:30-14:00 por defecto). Con la casilla activa, el dispositivo ficha/desficha solo a esas horas, comprobando antes el estado real en Woffu para no fichar dos veces.
+- **Servidor de control remoto** — URL WebSocket del servidor (p.ej. `wss://woffu.ededona.es/ws/device`); vacío = deshabilitado. El dispositivo se identifica con su nombre (`Semaforo-XXXXXX`) y la password de la red del portal, que son también el usuario/password de la web app.
 - **Guardar y reiniciar** — persiste la configuración en NVS y reinicia en modo normal (`RUNNING`).
 - La comprobación de actualización OTA es automática (si hay conexión); si hay una versión nueva disponible aparece un botón **Actualizar** para descargarla e instalarla. Mientras se instala, la página se va recargando sola mostrando el progreso.
 - **Restablecer de fábrica** — borra la configuración guardada (incluida la tarjeta NFC aprendida) y reinicia, volviendo a abrir el portal.
@@ -65,13 +74,15 @@ Al arrancar sin datos guardados (o tras un "Restablecer de fábrica"), el dispos
 - [Requisitos.md](Requisitos.md) — alcance funcional, hardware, portal de configuración WiFi, OTA.
 - [Arquitectura.md](Arquitectura.md) — máquina de estados, tareas, portal WiFi/NVS, cliente Woffu, OTA.
 - [Plan.md](Plan.md) — plan de implementación: pasos hechos y pendientes.
+- [server/README.md](server/README.md) — servidor de control remoto: despliegue, acceso, seguridad.
 - [tools/README.md](tools/README.md) — scripts auxiliares de desarrollo.
 
 ## Stack
 
-- PlatformIO + framework Arduino (`arduino-esp32`).
-- Librerías: WebServer y DNSServer (portal de configuración, incluidas en el core de `arduino-esp32`), HTTPClient/HTTPUpdate (API Woffu y OTA), Preferences (NVS), ArduinoJson, Adafruit PN532 + Adafruit BusIO (lector NFC por SPI).
-- CI/CD: GitHub Actions + `semantic-release` (versionado y publicación de releases a partir de Conventional Commits).
+- PlatformIO + framework Arduino (`arduino-esp32` 2.0.x, `platform = espressif32 @ ^6.9.0`).
+- Librerías: WebServer y DNSServer (portal de configuración, incluidas en el core de `arduino-esp32`), HTTPClient/HTTPUpdate (API Woffu y OTA), Preferences (NVS), ArduinoJson, Adafruit PN532 + Adafruit BusIO (lector NFC por SPI), `links2004/WebSockets` (control remoto).
+- Servidor de control remoto: Python + `aiohttp`, web app HTML/CSS/JS sin dependencias, Docker.
+- CI/CD: GitHub Actions + `semantic-release` (versionado y publicación de releases a partir de Conventional Commits), solo con cambios en `firmware/`.
 
 ## Ejemplo de log por serie
 

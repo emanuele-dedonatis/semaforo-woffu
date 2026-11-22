@@ -47,10 +47,23 @@ Compatible con cualquier placa ESP32 que tenga WiFi (el provisioning y el OTA so
 - Todas las decisiones y llamadas se registran por el puerto serie.
 - Esta comprobación es independiente del fichaje por NFC (`## Fichaje por NFC`): ambas pueden estar activas a la vez.
 
+## Control remoto (opcional)
+
+- **Deshabilitado por defecto**. Se activa desde el portal de configuración indicando la URL del servidor (`wss://…/ws/device`).
+- El dispositivo abre una conexión WebSocket saliente (TLS) hacia un servidor propio y se mantiene conectado mientras está en modo normal, reconectando solo si se cae.
+- El servidor sirve una web app (pensada para el móvil) desde la que se puede:
+  - ver si el dispositivo está conectado, el estado en Woffu (dentro/fuera), el color real del semáforo y datos del dispositivo (firmware, WiFi, memoria, horario, NFC, fichaje automático);
+  - **fichar entrada/salida** a distancia, con la misma comprobación previa del estado real que el fichaje automático (no ficha si ya se está en el estado pedido, ni si no se puede confirmar el estado);
+  - **poner un color fijo** (rojo, ámbar, verde, todos o apagado; fijo o parpadeando) para que quien mire el semáforo no vea el estado real. Se mantiene, también tras reiniciar, hasta que se vuelve a **automático** desde la web app. Fuera de horario/festivo el semáforo sigue apagado;
+  - forzar una consulta a Woffu, reiniciar el dispositivo o lanzar una actualización OTA;
+  - ver la actividad reciente (fichajes por NFC, horario o remoto, conexiones, errores) y, en modo debug, el log del dispositivo en vivo (el mismo que sale por el puerto serie).
+- Acceso a la web app con usuario = nombre del dispositivo (`Semaforo-XXXXXX`) y password = la de la red WiFi de su portal; el dispositivo usa la misma pareja para autenticarse ante el servidor.
+
 ## Funcionalidades futuras
 
 - Fichaje automático adicional (p.ej. detectando conexión bluetooth del móvil o del portátil).
-- Conectividad con un servidor externo (p.ej. comandos desde Telegram).
+- Notificaciones (p.ej. Telegram) a partir de los eventos del control remoto.
+- Password propia para el dispositivo/web app (hoy derivada de la MAC, ver Arquitectura.md, `## Control remoto`).
 
 ## Hardware
 
@@ -105,4 +118,5 @@ Al cerrarse la ventana de portal (o al terminar el "cargando" inicial si nadie s
 ## Stack de desarrollo
 
 - VSCode + **PlatformIO**, framework **Arduino** (`arduino-esp32`).
-- Librerías: WebServer y DNSServer (portal de configuración, incluidas en el core de `arduino-esp32`), HTTPClient/HTTPUpdate (API Woffu y OTA), Preferences (NVS), ArduinoJson, Adafruit PN532 + Adafruit BusIO (lector NFC por SPI).
+- Librerías: WebServer y DNSServer (portal de configuración, incluidas en el core de `arduino-esp32`), HTTPClient/HTTPUpdate (API Woffu y OTA), Preferences (NVS), ArduinoJson, Adafruit PN532 + Adafruit BusIO (lector NFC por SPI), `links2004/WebSockets` (control remoto).
+- Servidor de control remoto: Python + `aiohttp`, en Docker detrás de nginx (ver `server/README.md`).
