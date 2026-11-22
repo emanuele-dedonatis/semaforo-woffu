@@ -146,6 +146,16 @@ void ledToJson(JsonObject obj, const LedCommand& cmd) {
     obj["mode"] = ledModeName(cmd.mode);
 }
 
+bool parseHhMm(const char* text, uint16_t& outMinutes) {
+    unsigned int h = 0;
+    unsigned int m = 0;
+    if (text == nullptr || sscanf(text, "%u:%u", &h, &m) != 2 || h > 23 || m > 59) {
+        return false;
+    }
+    outMinutes = static_cast<uint16_t>(h * 60 + m);
+    return true;
+}
+
 String minutesToHhMm(uint16_t minutes) {
     char buf[6];
     snprintf(buf, sizeof(buf), "%02u:%02u", minutes / 60, minutes % 60);
@@ -306,7 +316,10 @@ void AppStateMachine::enterConnecting() {
 void AppStateMachine::handleConnecting() {
     if (wifi_.isConnected() && timeSync_.isSynced()) {
         otaCheckTriggered_ = true;
-        performOtaCheck();
+        // Con la actualizacion automatica activada, si hay version nueva se
+        // instala aqui mismo (antes de abrir el portal) y el dispositivo se
+        // reinicia; si falla, se sigue con el arranque normal.
+        checkOtaAndMaybeInstall("al arrancar");
         enterPortalWindow();
         return;
     }
@@ -331,6 +344,28 @@ void AppStateMachine::enterPortalWindow() {
     updateLedForCurrentState();
 }
 
+void AppStateMachine::checkOtaAndMaybeInstall(const char* origin) {
+    if (performOtaCheck() == OtaCheckResult::AVAILABLE && config_.get().otaAutoUpdate) {
+        installOta(otaLatest_, origin);
+    }
+}
+
+void AppStateMachine::installOta(const String& version, const char* origin) {
+    logPrintf("OTA (%s): instalando %s -> %s...\n", origin, FIRMWARE_VERSION, version.c_str());
+    remote_.sendEvent("ota", String("Instalando firmware ") + version + " (" + origin + ")...");
+    lastLoggedOtaPercent_ = -1;
+    setLed(ledRotateFast());
+    OtaResult result = otaUpdater_.update(version);
+    // UPDATED no vuelve aqui (update() reinicia el dispositivo).
+    if (result == OtaResult::ERROR) {
+        config_.clearOtaNote();
+        logPrintf("OTA (%s): error (%s).\n", origin, otaUpdater_.lastErrorDetail().c_str());
+        remote_.sendEvent("error", "OTA fallida: " + otaUpdater_.lastErrorDetail());
+    }
+    // Quien llame restaura los LEDs (depende del estado en el que estemos).
+    ledSentValid_ = false;
+}
+
 void AppStateMachine::enterRunning() {
     state_ = AppState::RUNNING;
     logPrintln("Modo normal (RUNNING): portal apagado, conectando a la WiFi configurada.");
@@ -342,7 +377,8 @@ void AppStateMachine::enterRunning() {
     }
     scheduler_.configure(config_.get());
     woffuClient_.begin(config_.get().woffuUsername, config_.get().woffuPassword);
-    remote_.begin(config_.get().remoteUrl, DeviceIdentity::name(), DeviceIdentity::password());
+    remote_.begin(config_.get().remoteUrl, DeviceIdentity::name(), DeviceIdentity::token(),
+                  config_.get().devicePassword);
     statusLedValid_ = false;
     wifiDisconnectedSinceMs_ = millis();
     wifiConnectTimeoutLogged_ = false;
@@ -475,24 +511,40 @@ void AppStateMachine::handlePortal() {
     }
 }
 
-void AppStateMachine::performOtaCheck() {
-    logPrintln("Comprobacion automatica de actualizacion OTA (wifi y hora listas). Comprobando...");
+OtaCheckResult AppStateMachine::performOtaCheck() {
+    logPrintln("Comprobacion de actualizacion OTA...");
     portal_.reportOtaChecking();
+    // Se marca el dia como comprobado pase lo que pase (mismo criterio sin
+    // reintentos que refreshWorkdayInfo()): la siguiente, manana.
+    time_t now = time(nullptr);
+    struct tm timeinfo;
+    localtime_r(&now, &timeinfo);
+    lastOtaCheckYday_ = timeinfo.tm_yday;
+    lastOtaCheckEpoch_ = now;
+
     String latest;
-    switch (otaUpdater_.checkForUpdate(latest)) {
+    OtaCheckResult result = otaUpdater_.checkForUpdate(latest);
+    switch (result) {
         case OtaCheckResult::UP_TO_DATE:
             logPrintln("OTA: ya esta en la ultima version.");
             portal_.reportOtaUpToDate();
+            otaAvailable_ = false;
+            otaLatest_ = FIRMWARE_VERSION;
             break;
         case OtaCheckResult::AVAILABLE:
             logPrintf("OTA: version nueva disponible (%s -> %s).\n", FIRMWARE_VERSION, latest.c_str());
             portal_.reportOtaAvailable(latest);
+            otaAvailable_ = true;
+            otaLatest_ = latest;
+            remote_.sendEvent("ota", "Version nueva disponible: " + latest);
             break;
         case OtaCheckResult::ERROR:
             logPrintf("OTA: error comprobando actualizacion (%s).\n", otaUpdater_.lastErrorDetail().c_str());
             portal_.reportOtaError(otaUpdater_.lastErrorDetail());
             break;
     }
+    remote_.requestStatus();
+    return result;
 }
 
 void AppStateMachine::handleRunning() {
@@ -541,6 +593,20 @@ void AppStateMachine::handleRunning() {
     // desfichar a distancia si se olvido al salir), por eso va antes del
     // return de PollMode::OFF.
     handleRemote(mode);
+
+    // Aprendizaje de tarjeta lanzado desde la web app: ocupa lector y LEDs.
+    if (handleRunningNfcLearn(mode)) {
+        return;
+    }
+
+    // Comprobacion OTA diaria, al encenderse el semaforo (primera vuelta del
+    // dia en modo activo; si ya se comprobo hoy al arrancar, no se repite).
+    if (mode == PollMode::ACTIVE && timeinfo.tm_yday != lastOtaCheckYday_) {
+        checkOtaAndMaybeInstall("comprobacion diaria");
+        if (!ledSentValid_) {
+            reapplyStatusLed(mode);
+        }
+    }
 
     if (mode == PollMode::OFF) {
         // El color fijo remoto no aplica aqui: fuera de horario el semaforo
@@ -845,16 +911,21 @@ void AppStateMachine::executeRemoteCommand(const RemoteCommand& command, PollMod
     } else if (command.cmd == "reboot") {
         remote_.sendAck(command.id, true, "reiniciando");
         logPrintln("Control remoto: reinicio solicitado.");
-        // Unas vueltas de loop() para que el ack y la ultima linea de log
-        // salgan antes de cortar la conexion.
-        for (int i = 0; i < 5; i++) {
-            remote_.loop();
-            delay(100);
+        finishCommandAndRestart();
+    } else if (command.cmd == "ota_check") {
+        switch (performOtaCheck()) {
+            case OtaCheckResult::UP_TO_DATE:
+                remote_.sendAck(command.id, true, String("Ya esta en la ultima version (") + FIRMWARE_VERSION + ").");
+                break;
+            case OtaCheckResult::AVAILABLE:
+                remote_.sendAck(command.id, true, "Version nueva disponible: " + otaLatest_);
+                break;
+            case OtaCheckResult::ERROR:
+                remote_.sendAck(command.id, false, "Error comprobando: " + otaUpdater_.lastErrorDetail());
+                break;
         }
-        ESP.restart();
     } else if (command.cmd == "ota_update") {
-        String latest;
-        switch (otaUpdater_.checkForUpdate(latest)) {
+        switch (performOtaCheck()) {
             case OtaCheckResult::UP_TO_DATE:
                 remote_.sendAck(command.id, true, String("Ya esta en la ultima version (") + FIRMWARE_VERSION + ").");
                 return;
@@ -864,24 +935,35 @@ void AppStateMachine::executeRemoteCommand(const RemoteCommand& command, PollMod
             case OtaCheckResult::AVAILABLE:
                 break;
         }
-        remote_.sendAck(command.id, true, String("Actualizando de ") + FIRMWARE_VERSION + " a " + latest +
+        remote_.sendAck(command.id, true, String("Actualizando de ") + FIRMWARE_VERSION + " a " + otaLatest_ +
                                               "; el dispositivo se reiniciara solo.");
-        logPrintf("OTA remota: actualizando %s -> %s...\n", FIRMWARE_VERSION, latest.c_str());
         remote_.loop();
-        lastLoggedOtaPercent_ = -1;
-        setLed(ledRotateFast());
-        OtaResult result = otaUpdater_.update(latest);
-        if (result == OtaResult::ERROR) {
-            config_.clearOtaNote();
-            logPrintf("OTA remota: error (%s).\n", otaUpdater_.lastErrorDetail().c_str());
-            remote_.sendEvent("error", "OTA fallida: " + otaUpdater_.lastErrorDetail());
-            nextPollAtMs_ = millis();
-            if (mode == PollMode::ACTIVE) {
-                reapplyStatusLed(mode);
-            } else {
-                setLed(ledOff());
-            }
+        installOta(otaLatest_, "remota");
+        // Si llegamos aqui, fallo (con exito se reinicia dentro).
+        nextPollAtMs_ = millis();
+        if (mode == PollMode::ACTIVE) {
+            reapplyStatusLed(mode);
+        } else {
+            setLed(ledOff());
         }
+    } else if (command.cmd == "config_set") {
+        applyRemoteConfig(command, mode);
+    } else if (command.cmd == "nfc_learn") {
+        if (!nfcReaderOk_) {
+            remote_.sendAck(command.id, false, "no hay lector NFC conectado");
+            return;
+        }
+        nfcLearnActive_ = true;
+        nfcLearnDeadlineMs_ = millis() + kNfcLearnTimeoutMs;
+        nfcLearnResultUntilMs_ = 0;
+        setLed(ledRotateFast());
+        logPrintln("NFC: aprendizaje iniciado desde el control remoto, esperando tarjeta...");
+        remote_.sendAck(command.id, true, "Acerca la tarjeta al lector (30 s).");
+    } else if (command.cmd == "factory_reset") {
+        remote_.sendAck(command.id, true, "Restableciendo de fabrica y reiniciando: se abrira el portal de configuracion.");
+        logPrintln("Reset de fabrica solicitado desde el control remoto. Borrando configuracion y reiniciando...");
+        config_.factoryReset();
+        finishCommandAndRestart();
     } else {
         remote_.sendAck(command.id, false, "comando desconocido: " + command.cmd);
     }
@@ -948,5 +1030,148 @@ void AppStateMachine::publishStatus(PollMode mode) {
         autoSign["today_end"] = minutesToHhMm(today.endMinutes);
     }
 
+    // Configuracion editable desde la web app (sin las passwords de WiFi ni
+    // Woffu, que nunca salen del dispositivo).
+    JsonObject config = doc["config"].to<JsonObject>();
+    config["wifi_ssid"] = cfg.wifiSsid;
+    config["woffu_user"] = cfg.woffuUsername;
+    config["window_start"] = minutesToHhMm(cfg.activeWindow.startMinutes);
+    config["window_end"] = minutesToHhMm(cfg.activeWindow.endMinutes);
+    config["auto_sign"] = cfg.autoSignEnabled;
+    JsonArray schedule = config["auto_sign_schedule"].to<JsonArray>();
+    for (int i = 0; i < 5; i++) {
+        JsonObject day = schedule.add<JsonObject>();
+        day["start"] = minutesToHhMm(cfg.autoSignSchedule[i].startMinutes);
+        day["end"] = minutesToHhMm(cfg.autoSignSchedule[i].endMinutes);
+    }
+    config["remote_url"] = cfg.remoteUrl;
+    config["has_password"] = !cfg.devicePassword.isEmpty();
+    config["ota_auto"] = cfg.otaAutoUpdate;
+
+    JsonObject ota = doc["ota"].to<JsonObject>();
+    ota["latest"] = otaLatest_;
+    ota["available"] = otaAvailable_;
+    ota["last_check_epoch"] = static_cast<long>(lastOtaCheckEpoch_);
+
     remote_.sendStatus(doc);
+}
+
+void AppStateMachine::finishCommandAndRestart() {
+    // Unas vueltas de loop() para que el ack y las ultimas lineas de log
+    // salgan antes de cortar la conexion.
+    for (int i = 0; i < 5; i++) {
+        remote_.loop();
+        delay(100);
+    }
+    ESP.restart();
+}
+
+void AppStateMachine::applyRemoteConfig(const RemoteCommand& command, PollMode mode) {
+    JsonDocument doc;
+    if (deserializeJson(doc, command.config) != DeserializationError::Ok || !doc.is<JsonObject>()) {
+        remote_.sendAck(command.id, false, "configuracion no valida");
+        return;
+    }
+    const DeviceConfig& current = config_.get();
+    DeviceConfig next = current;
+    bool ok = true;
+
+    // Los campos que no vienen no se tocan. Las passwords (WiFi, Woffu) nunca
+    // salen del dispositivo: solo se cambian si llega un valor no vacio.
+    if (doc["wifi_ssid"].is<const char*>()) next.wifiSsid = doc["wifi_ssid"].as<const char*>();
+    if (doc["wifi_pass"].is<const char*>() && strlen(doc["wifi_pass"].as<const char*>()) > 0) {
+        next.wifiPassword = doc["wifi_pass"].as<const char*>();
+    }
+    if (doc["woffu_user"].is<const char*>()) next.woffuUsername = doc["woffu_user"].as<const char*>();
+    if (doc["woffu_pass"].is<const char*>() && strlen(doc["woffu_pass"].as<const char*>()) > 0) {
+        next.woffuPassword = doc["woffu_pass"].as<const char*>();
+    }
+    if (doc["window_start"].is<const char*>()) ok &= parseHhMm(doc["window_start"], next.activeWindow.startMinutes);
+    if (doc["window_end"].is<const char*>()) ok &= parseHhMm(doc["window_end"], next.activeWindow.endMinutes);
+    if (doc["auto_sign"].is<bool>()) next.autoSignEnabled = doc["auto_sign"];
+    if (doc["auto_sign_schedule"].is<JsonArrayConst>()) {
+        JsonArrayConst days = doc["auto_sign_schedule"];
+        if (days.size() != 5) {
+            ok = false;
+        }
+        for (size_t i = 0; i < 5 && i < days.size(); i++) {
+            ok &= parseHhMm(days[i]["start"], next.autoSignSchedule[i].startMinutes);
+            ok &= parseHhMm(days[i]["end"], next.autoSignSchedule[i].endMinutes);
+        }
+    }
+    if (doc["remote_url"].is<const char*>()) {
+        next.remoteUrl = doc["remote_url"].as<const char*>();
+        next.remoteUrl.trim();
+    }
+    if (doc["device_password"].is<const char*>()) next.devicePassword = doc["device_password"].as<const char*>();
+    if (doc["ota_auto"].is<bool>()) next.otaAutoUpdate = doc["ota_auto"];
+
+    String error = "revisa los campos de hora";
+    if (!ok || !validateConfig(next, error)) {
+        remote_.sendAck(command.id, false, "No se ha guardado: " + error + ".");
+        return;
+    }
+
+    // Lo que solo se usa al arrancar (WiFi, cuenta de Woffu, servidor) exige
+    // reiniciar, igual que al guardar desde el portal; el resto se aplica ya.
+    bool needsReboot = next.wifiSsid != current.wifiSsid || next.wifiPassword != current.wifiPassword ||
+                       next.woffuUsername != current.woffuUsername ||
+                       next.woffuPassword != current.woffuPassword || next.remoteUrl != current.remoteUrl;
+    bool passwordChanged = next.devicePassword != current.devicePassword;
+
+    if (!config_.save(next)) {
+        remote_.sendAck(command.id, false, "error guardando en memoria (NVS)");
+        return;
+    }
+    logPrintln("Configuracion cambiada desde el control remoto.");
+
+    if (needsReboot) {
+        remote_.sendAck(command.id, true, "Guardado. Reiniciando para aplicar la configuracion...");
+        finishCommandAndRestart();
+        return;
+    }
+
+    scheduler_.configure(config_.get());
+    runningPollModeKnown_ = false;  // re-evalua la ventana de encendido con el horario nuevo
+    remote_.requestStatus();
+    remote_.sendAck(command.id, true, passwordChanged ? "Guardado. Password cambiada: vuelve a entrar." : "Guardado.");
+    if (passwordChanged) {
+        // Despues del ack: al recibirla, el servidor cierra las sesiones de la
+        // web app abiertas con la password anterior (incluida la que la cambio).
+        remote_.setWebPassword(next.devicePassword);
+    }
+    (void)mode;
+}
+
+bool AppStateMachine::handleRunningNfcLearn(PollMode mode) {
+    if (nfcLearnActive_) {
+        String uid;
+        if (nfcReader_.poll(uid)) {
+            config_.setLearnedCardUid(uid);
+            logPrintf("NFC: tarjeta aprendida (UID %s).\n", uid.c_str());
+            remote_.sendEvent("nfc", "Tarjeta NFC aprendida.");
+            remote_.requestStatus();
+            setLed(ledFastBlink(LedColor::ALL));
+            nfcLearnActive_ = false;
+            nfcLearnResultUntilMs_ = millis() + kNfcLearnResultHoldMs;
+        } else if (millis() >= nfcLearnDeadlineMs_) {
+            logPrintln("NFC: aprendizaje cancelado (no se detecto ninguna tarjeta a tiempo).");
+            remote_.sendEvent("error", "Aprendizaje NFC cancelado: no se detecto ninguna tarjeta en 30 s.");
+            nfcLearnActive_ = false;
+            nfcLearnResultUntilMs_ = millis();
+        }
+        return true;
+    }
+    if (nfcLearnResultUntilMs_ != 0) {
+        if (millis() < nfcLearnResultUntilMs_) {
+            return true;
+        }
+        nfcLearnResultUntilMs_ = 0;
+        if (mode == PollMode::ACTIVE) {
+            reapplyStatusLed(mode);
+        } else {
+            setLed(ledOff());
+        }
+    }
+    return false;
 }

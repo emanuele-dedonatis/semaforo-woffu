@@ -16,7 +16,10 @@ void Config::begin() {
     current_.activeWindow.startMinutes = prefs.getUShort("win_s", 450);
     current_.activeWindow.endMinutes = prefs.getUShort("win_e", 1140);
     learnedCardUid_ = prefs.getString("nfc_uid", "");
-    current_.remoteUrl = prefs.getString("rem_url", "");
+    // Sin clave guardada = URL por defecto; guardada vacia = deshabilitado.
+    current_.remoteUrl = prefs.isKey("rem_url") ? prefs.getString("rem_url", "") : String(kDefaultRemoteUrl);
+    current_.devicePassword = prefs.getString("dev_pass", "");
+    current_.otaAutoUpdate = prefs.getBool("ota_auto", false);
     // led_ovr: 0 = sin override; si no, 0x80 | (color << 4) | mode (ver setLedOverride()).
     uint8_t ovr = prefs.getUChar("led_ovr", 0);
     hasLedOverride_ = ovr != 0;
@@ -56,6 +59,8 @@ bool Config::save(const DeviceConfig& config) {
     prefs.putUShort("win_e", config.activeWindow.endMinutes);
 
     prefs.putString("rem_url", config.remoteUrl);
+    prefs.putString("dev_pass", config.devicePassword);
+    prefs.putBool("ota_auto", config.otaAutoUpdate);
     prefs.putBool("as_en", config.autoSignEnabled);
     for (int i = 0; i < 5; i++) {
         char keyStart[8];
@@ -125,6 +130,38 @@ void Config::setLearnedCardUid(const String& uidHex) {
     prefs.putString("nfc_uid", uidHex);
     prefs.end();
     learnedCardUid_ = uidHex;
+}
+
+bool validateConfig(const DeviceConfig& config, String& error) {
+    if (config.wifiSsid.isEmpty()) {
+        error = "falta la red WiFi";
+        return false;
+    }
+    if (config.woffuUsername.isEmpty()) {
+        error = "falta el usuario de Woffu";
+        return false;
+    }
+    if (!config.remoteUrl.isEmpty() && !config.remoteUrl.startsWith("wss://") &&
+        !config.remoteUrl.startsWith("ws://")) {
+        error = "la URL del servidor debe empezar por wss:// o ws://";
+        return false;
+    }
+    size_t passLen = config.devicePassword.length();
+    if (passLen != 0 && (passLen < 8 || passLen > 63)) {
+        error = "la password del dispositivo debe tener entre 8 y 63 caracteres (o dejarse vacia)";
+        return false;
+    }
+    for (int i = 0; i < 5; i++) {
+        if (config.autoSignSchedule[i].startMinutes >= 1440 || config.autoSignSchedule[i].endMinutes >= 1440) {
+            error = "horario de fichaje automatico no valido";
+            return false;
+        }
+    }
+    if (config.activeWindow.startMinutes >= 1440 || config.activeWindow.endMinutes >= 1440) {
+        error = "horario de encendido no valido";
+        return false;
+    }
+    return true;
 }
 
 bool Config::ledOverride(uint8_t& color, uint8_t& mode) const {

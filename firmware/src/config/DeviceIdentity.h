@@ -2,12 +2,18 @@
 
 #include <Arduino.h>
 
-// Identidad del dispositivo derivada de la MAC: el nombre (SSID del AP del
-// portal, "Semaforo-XXXXXX") y la password de 8 digitos de ese mismo AP.
-// La misma pareja sirve como usuario/password para autenticarse contra el
-// servidor remoto (RemoteLink) y para entrar en la web app que este sirve
-// (ver Arquitectura.md, `## Control remoto`).
+// Identidad del dispositivo frente al servidor de control remoto.
 namespace DeviceIdentity {
+
+// "Semaforo-XXXXXX" (ultimos 3 bytes de la MAC): SSID del AP del portal y
+// usuario de la web app del servidor.
 String name();
-String password();
+
+// Secreto aleatorio de 32 caracteres hex con el que el dispositivo se
+// autentica ante el servidor (HTTP Basic name:token). Se genera la primera vez
+// que se pide y se guarda en NVS (namespace "dev", aparte de "cfg" para que un
+// reset de fabrica no lo cambie: el servidor lo registra la primera vez que el
+// dispositivo se conecta y despues solo acepta ese). Nunca se muestra.
+String token();
+
 }

@@ -209,8 +209,11 @@ select{width:100%;padding:.5em;box-sizing:border-box;font-size:1em}
 </div>
 <div class="checkbox-row"><input name="auto_sign_enabled" type="checkbox" id="auto_sign_enabled" %AUTO_SIGN_CHECKED%><label for="auto_sign_enabled">Fichaje automatico (ficha/desficha solo a la hora configurada de cada dia)</label></div>
 %AUTO_SIGN_SCHEDULE%
-<label>Servidor de control remoto (opcional)</label><input name="remote_url" value="%REMOTE_URL%" placeholder="wss://servidor/ws/device">
-<p class="version">Vacio = deshabilitado. El dispositivo se identifica como %DEVICE_NAME% con la misma password que esta red WiFi; son tambien el usuario/password de la web app del servidor.</p>
+<label>Password del dispositivo</label><input name="device_pass" type="password" value="%DEVICE_PASS%" minlength="8" maxlength="63" autocomplete="new-password">
+<p class="version">Protege esta red WiFi de configuracion y la web app de control remoto. Vacia = sin password (red abierta). Minimo 8 caracteres.</p>
+<div class="checkbox-row"><input name="ota_auto" type="checkbox" id="ota_auto" %OTA_AUTO_CHECKED%><label for="ota_auto">Actualizar el firmware automaticamente (al arrancar y una vez al dia, al encenderse el semaforo)</label></div>
+<label>Servidor de control remoto</label><input name="remote_url" value="%REMOTE_URL%" placeholder="wss://servidor/ws/device">
+<p class="version">Vacio = deshabilitado. En la web app del servidor se entra con el nombre %DEVICE_NAME% y la password del dispositivo.</p>
 <button type="submit">Guardar y reiniciar</button>
 </form>
 <hr>
@@ -232,10 +235,17 @@ void ProvisioningPortal::begin(const DeviceConfig& current, bool hasLearnedCard)
     nfcLearnUiState_ = NfcLearnUiState::IDLE;
 
     String apSsid = DeviceIdentity::name();
-    String apPassword = DeviceIdentity::password();
-
-    WiFi.softAP(apSsid.c_str(), apPassword.c_str());
-    logPrintf("Portal WiFi: %s, password: %s (192.168.4.1)\n", apSsid.c_str(), apPassword.c_str());
+    if (current_.devicePassword.isEmpty()) {
+        // Sin password configurada: red abierta (y web app sin password).
+        WiFi.softAP(apSsid.c_str());
+        logPrintf("Portal WiFi: %s, red abierta sin password (192.168.4.1)\n", apSsid.c_str());
+    } else {
+        WiFi.softAP(apSsid.c_str(), current_.devicePassword.c_str());
+        logPrintf("Portal WiFi: %s, protegida con la password del dispositivo (192.168.4.1)\n", apSsid.c_str());
+        // Solo por Serial (no por logPrintf(), que tambien llega al log remoto):
+        // es la unica forma de recuperarla si se olvida, con acceso fisico.
+        Serial.printf("Portal WiFi: password del dispositivo: %s\n", current_.devicePassword.c_str());
+    }
 
     ssidOptionsHtml_ = scanSsidOptionsHtml(current_.wifiSsid, current_.wifiPassword);
 
@@ -424,6 +434,8 @@ void ProvisioningPortal::handleRoot() {
     page.replace("%AUTO_SIGN_CHECKED%", current_.autoSignEnabled ? "checked" : "");
     page.replace("%AUTO_SIGN_SCHEDULE%", renderAutoSignScheduleHtml(current_.autoSignSchedule));
     page.replace("%REMOTE_URL%", htmlEscape(current_.remoteUrl));
+    page.replace("%DEVICE_PASS%", htmlEscape(current_.devicePassword));
+    page.replace("%OTA_AUTO_CHECKED%", current_.otaAutoUpdate ? "checked" : "");
     page.replace("%DEVICE_NAME%", htmlEscape(DeviceIdentity::name()));
     server_->send(200, "text/html", page);
 }
@@ -436,6 +448,8 @@ void ProvisioningPortal::handleSave() {
     config.woffuPassword = server_->arg("woffu_pass");
     config.remoteUrl = server_->arg("remote_url");
     config.remoteUrl.trim();
+    config.devicePassword = server_->arg("device_pass");
+    config.otaAutoUpdate = server_->hasArg("ota_auto");
 
     bool ok = true;
     ok &= parseHhMm(server_->arg("win_start"), config.activeWindow.startMinutes);
@@ -446,13 +460,11 @@ void ProvisioningPortal::handleSave() {
         ok &= parseHhMm(server_->arg("auto_" + field + "_end"), config.autoSignSchedule[i].endMinutes);
     }
 
-    if (!config.remoteUrl.isEmpty() && !config.remoteUrl.startsWith("wss://") &&
-        !config.remoteUrl.startsWith("ws://")) {
-        ok = false;
-    }
-
-    if (!ok || config.wifiSsid.isEmpty() || config.woffuUsername.isEmpty()) {
-        server_->send(400, "text/html", "<!doctype html><html><body><h1>Error</h1><p>Revisa los campos.</p></body></html>");
+    String error = "revisa los campos de hora";
+    if (!ok || !validateConfig(config, error)) {
+        server_->send(400, "text/html",
+                      "<!doctype html><html><body><h1>Error</h1><p>No se ha guardado: " + htmlEscape(error) +
+                          ".</p><p><a href=\"/\">Volver</a></p></body></html>");
         return;
     }
 

@@ -10,9 +10,10 @@ class WebSocketsClient;
 // devuelve tal cual en el ack, para que la web app sepa a que boton responde.
 struct RemoteCommand {
     String id;
-    String cmd;    // sign_in, sign_out, refresh, led_set, led_auto, reboot, ota_update, status
+    String cmd;    // ver Arquitectura.md, `## Control remoto` (sign_in, led_set, config_set...)
     String color;  // solo led_set: red, yellow, green, all, off
     String mode;   // solo led_set: solid, blink_slow, blink_fast
+    String config; // solo config_set: objeto JSON con los campos a cambiar, serializado
 };
 
 // Cliente WebSocket (wss://) hacia el servidor de control remoto. Solo
@@ -25,9 +26,13 @@ struct RemoteCommand {
 // cada vez mas mientras el servidor no responde, ver kReconnect*).
 class RemoteLink {
 public:
-    // url vacia = deshabilitado (loop() no hace nada). user/password: los del
-    // AP del portal (DeviceIdentity), enviados como HTTP Basic en el handshake.
-    void begin(const String& url, const String& user, const String& password);
+    // url vacia = deshabilitado (loop() no hace nada). name/token: identidad
+    // del dispositivo (DeviceIdentity), enviada como HTTP Basic en el
+    // handshake. webPassword: password del dispositivo (puede ser vacia), que
+    // se manda en el hello para que el servidor proteja con ella la web app.
+    void begin(const String& url, const String& name, const String& token, const String& webPassword);
+    // Cambio de password sin reiniciar: se manda al servidor en cuanto se puede.
+    void setWebPassword(const String& webPassword);
     // Solo debe llamarse con WiFi conectada y hora NTP sincronizada (sin hora
     // la validacion del certificado TLS falla, igual que con Woffu/GitHub).
     void loop();
@@ -59,8 +64,9 @@ private:
     uint16_t port_ = 443;
     String path_;
     bool secure_ = true;
-    String user_;
-    String password_;
+    String name_;
+    String token_;
+    String webPassword_;
 
     uint32_t disconnectedSinceMs_ = 0;
     uint32_t currentReconnectMs_ = 0;

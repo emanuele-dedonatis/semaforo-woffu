@@ -2,6 +2,10 @@
 
 #include <Arduino.h>
 
+// URL del servidor de control remoto que trae el firmware por defecto (campo
+// "Servidor de control remoto" del portal/web app; vacio = deshabilitado).
+constexpr const char* kDefaultRemoteUrl = "wss://woffu.ededona.es/ws/device";
+
 struct TimeWindow {
     uint16_t startMinutes = 0;
     uint16_t endMinutes = 0;
@@ -31,11 +35,24 @@ struct DeviceConfig {
         TimeWindow(510, 840),  // Viernes
     };
 
-    // Control remoto (RemoteLink): URL del endpoint WebSocket del servidor,
-    // p.ej. "wss://woffu.ededona.es/ws/device". Vacia = deshabilitado (por
-    // defecto). Ver Arquitectura.md, `## Control remoto`.
-    String remoteUrl;
+    // Control remoto (RemoteLink): URL del endpoint WebSocket del servidor.
+    // Por defecto kDefaultRemoteUrl; vacia = deshabilitado (el usuario la
+    // vacia a proposito). Ver Arquitectura.md, `## Control remoto`.
+    String remoteUrl = kDefaultRemoteUrl;
+
+    // Password del dispositivo: la de la red WiFi del portal de configuracion
+    // y la de la web app del servidor remoto. Vacia por defecto = red abierta
+    // y web app sin password. Si no esta vacia, 8-63 caracteres (WPA2).
+    String devicePassword;
+
+    // Instalar solas las actualizaciones OTA que se encuentren (al arrancar y
+    // una vez al dia, al encenderse el semaforo), sin pulsar "Actualizar".
+    bool otaAutoUpdate = false;
 };
+
+// Comprueba que una configuracion se puede guardar (misma validacion para el
+// portal local y para el control remoto). Deja el motivo en `error`.
+bool validateConfig(const DeviceConfig& config, String& error);
 
 class Config {
 public:

@@ -68,7 +68,7 @@ bool parseUrl(const String& url, bool& secure, String& host, uint16_t& port, Str
 }
 }  // namespace
 
-void RemoteLink::begin(const String& url, const String& user, const String& password) {
+void RemoteLink::begin(const String& url, const String& name, const String& token, const String& webPassword) {
     enabled_ = false;
     if (url.isEmpty()) {
         logPrintln("Control remoto: deshabilitado (sin URL de servidor configurada).");
@@ -78,11 +78,12 @@ void RemoteLink::begin(const String& url, const String& user, const String& pass
         logPrintf("Control remoto: URL de servidor invalida (%s), deshabilitado.\n", url.c_str());
         return;
     }
-    user_ = user;
-    password_ = password;
+    name_ = name;
+    token_ = token;
+    webPassword_ = webPassword;
     enabled_ = true;
     logPrintf("Control remoto: servidor %s://%s:%u%s, dispositivo %s.\n", secure_ ? "wss" : "ws", host_.c_str(),
-              port_, path_.c_str(), user_.c_str());
+              port_, path_.c_str(), name_.c_str());
 }
 
 void RemoteLink::loop() {
@@ -99,7 +100,7 @@ void RemoteLink::loop() {
         } else {
             ws_->begin(host_.c_str(), port_, path_.c_str(), "");
         }
-        ws_->setAuthorization(user_.c_str(), password_.c_str());
+        ws_->setAuthorization(name_.c_str(), token_.c_str());
         ws_->onEvent([this](WStype_t type, uint8_t* payload, size_t length) {
             onEvent(static_cast<int>(type), payload, length);
         });
@@ -139,7 +140,8 @@ void RemoteLink::onEvent(int type, uint8_t* payload, size_t length) {
             logPrintln("Control remoto: conectado al servidor.");
             JsonDocument hello;
             hello["type"] = "hello";
-            hello["name"] = user_;
+            hello["name"] = name_;
+            hello["password"] = webPassword_;
             hello["fw"] = FIRMWARE_VERSION;
             hello["reset_reason"] = resetReasonName();
             sendJson(hello);
@@ -180,11 +182,23 @@ void RemoteLink::handleText(const char* payload, size_t length) {
     cmd.cmd = doc["cmd"] | "";
     cmd.color = doc["color"] | "";
     cmd.mode = doc["mode"] | "";
+    if (doc["config"].is<JsonObject>()) {
+        serializeJson(doc["config"], cmd.config);
+    }
     if (commandCount_ >= kCommandQueueSize) {
         sendAck(cmd.id, false, "dispositivo ocupado, demasiados comandos en cola");
         return;
     }
     commands_[commandCount_++] = cmd;
+}
+
+void RemoteLink::setWebPassword(const String& webPassword) {
+    webPassword_ = webPassword;
+    JsonDocument doc;
+    doc["type"] = "password";
+    doc["password"] = webPassword_;
+    // Si no hay conexion ahora, el proximo hello ya lleva la nueva.
+    sendJson(doc);
 }
 
 bool RemoteLink::takeCommand(RemoteCommand& out) {

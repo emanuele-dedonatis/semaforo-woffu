@@ -36,7 +36,14 @@ private:
     void handleConnecting();
     void handlePortal();
     void handleRunning();
-    void performOtaCheck();
+    OtaCheckResult performOtaCheck();
+    // Descarga e instala `version` (reinicia el dispositivo si va bien). Para
+    // la instalacion automatica y la remota; la del portal tiene su propio
+    // flujo (bombeo del portal, avisos en la pagina) en handlePortal().
+    void installOta(const String& version, const char* origin);
+    // Comprobacion diaria (y al arrancar): si hay version nueva y esta
+    // activada la actualizacion automatica, la instala.
+    void checkOtaAndMaybeInstall(const char* origin);
     void saveConfigAndReboot(const DeviceConfig& newConfig);
     void updateLedForCurrentState();
     void refreshWorkdayInfo(int yday);
@@ -60,6 +67,11 @@ private:
     void handleRemote(PollMode mode);
     void executeRemoteCommand(const RemoteCommand& command, PollMode mode);
     void publishStatus(PollMode mode);
+    void applyRemoteConfig(const RemoteCommand& command, PollMode mode);
+    // Aprendizaje de tarjeta NFC lanzado desde el control remoto (en RUNNING);
+    // devuelve true mientras ocupa el lector/LEDs.
+    bool handleRunningNfcLearn(PollMode mode);
+    void finishCommandAndRestart();
 
     AppState state_ = AppState::INIT;
     uint32_t connectingDeadlineMs_ = 0;
@@ -91,6 +103,11 @@ private:
     NfcReader nfcReader_;
     RemoteLink remote_;
     bool nfcReaderOk_ = false;
+    // Ultima comprobacion OTA (para el estado remoto y la comprobacion diaria).
+    String otaLatest_;
+    bool otaAvailable_ = false;
+    time_t lastOtaCheckEpoch_ = 0;
+    int lastOtaCheckYday_ = -1;
     String pollModeReason_;
     time_t lastPollEpoch_ = 0;
 
