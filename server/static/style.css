@@ -129,7 +129,8 @@ main { max-width: 640px; margin: 0 auto; padding: 4px 16px 32px; }
   background: var(--card); color: var(--text);
 }
 .btn:hover { border-color: var(--muted); }
-.btn:disabled { opacity: .5; cursor: progress; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn.busy { cursor: progress; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .btn.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); }
 .btn.big { padding: 16px 12px; font-size: 1.02rem; }

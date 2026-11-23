@@ -210,6 +210,7 @@ function renderHero() {
   }
   if (!online && state.statusAt) sub.push(`dato de ${ago(state.statusAt)}`);
   $("#woffu-sub").textContent = sub.join(" · ");
+  renderSignButtons(woffu);
 
   let ledText = "";
   if (s) {
@@ -217,6 +218,19 @@ function renderHero() {
     else if (s.led) ledText = `Semáforo: ${COLOR_NAMES[s.led.color] || s.led.color}, ${MODE_NAMES[s.led.mode] || s.led.mode}`;
   }
   $("#led-sub").textContent = ledText;
+}
+
+// Solo se puede fichar hacia el estado contrario al actual en Woffu: dentro,
+// solo salida; fuera, solo entrada. Con el estado desconocido, ambos (el
+// dispositivo comprueba igualmente el estado real antes de fichar).
+function renderSignButtons(woffu) {
+  const rules = { sign_in: ["in", "Ya estás dentro"], sign_out: ["out", "Ya estás fuera"] };
+  for (const [cmd, [blocked, why]] of Object.entries(rules)) {
+    const btn = $(`[data-cmd="${cmd}"]`);
+    const same = woffu === blocked;
+    btn.disabled = same || btn.classList.contains("busy");
+    btn.title = same ? why : "";
+  }
 }
 
 function renderOverride() {
@@ -435,6 +449,7 @@ function appendConsole(lines) {
 function setBusy(btn, busy) {
   btn.disabled = busy;
   btn.classList.toggle("busy", busy);
+  if (!busy) renderSignButtons(state.status && state.status.woffu ? state.status.woffu.status : null);
 }
 
 function command(btn, payload) {
