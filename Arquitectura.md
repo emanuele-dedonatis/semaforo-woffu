@@ -207,6 +207,24 @@ Lógica de interpretación (puede haber varios slots en el día, p.ej. con pausa
 
 Cualquier otro caso (respuesta inesperada, error HTTP, timeout, JSON inválido) → ámbar, sin reintento, como ya definido en Requisitos.md.
 
+### Saldo de horas
+
+Para la web app (saldo anual junto a Dentro/Fuera), mismo cálculo que `tools/balance.py` pero solo para el año:
+
+```
+GET https://app.woffu.com/api/svc/core/diariesquery/users/{userId}/diaries/summary/presence
+    ?userId={userId}&fromDate=YYYY-01-01&toDate=<ayer>&pageSize=<días+1>
+    &includeNotHourTypes=true&includeDifference=true
+```
+
+- `totalDifferenceTime` (segundos, trabajado − teórico) = **saldo hasta ayer**. Ese endpoint cuenta el día de hoy como jornada entera en negativo mientras no se cierra (ver `tools/README.md`), por eso el rango acaba ayer. El 1 de enero el saldo hasta ayer es 0 y no se pide.
+- La misma consulta para hoy (`fromDate=toDate=hoy`) da la **jornada teórica de hoy** (`totalScheduleTimeFormatted`, `{"values": ["7", "30"]}`).
+- La respuesta incluye además un diario por día (cientos de KB a final de año): `fetchDiariesTotals()` la lee con un filtro de ArduinoJson que solo conserva los totales.
+- Si `app.woffu.com` contesta 403/404 se prueba una vez con el subdominio de la empresa que devuelva `/api/companies` (como `balance.py`). No verificado contra la API real: si falla, el log lo dice.
+- `refreshBalance()` lo pide una vez al día, en la primera vuelta dentro de la ventana de encendido (con reintento cada 30 min si falla), y también con el comando `refresh`.
+- Lo trabajado hoy sale de los slots de cada `fetchStatus()` (`WoffuClient::todayWork()`: suma de los tramos cerrados + inicio del tramo abierto, con `shortTrueTime`).
+- El dispositivo no suma nada: manda las piezas en `status.balance` y la web app calcula el saldo en vivo, `until_yesterday_s + (closed_s + (ahora − open_since_epoch) − schedule_today_s)`, este último paréntesis solo si hoy ya hay algún fichaje (antes se muestra el saldo hasta ayer). Si está dentro y en negativo, muestra a qué hora queda a cero.
+
 ### Usuario actual (para saber el `userId`)
 
 ```
@@ -411,7 +429,7 @@ Dispositivo → servidor:
 |---|---|---|
 | `hello` | al conectar | `name`, `fw`, `reset_reason` (`esp_reset_reason()`: power-on, panic, brownout…), `password` (la del dispositivo, puede ser vacía) |
 | `password` | al cambiar la password sin reiniciar | `password` |
-| `status` | al conectar, en cada cambio relevante (`requestStatus()`: LED, estado Woffu, modo, override) y cada 60s | `fw`, `uptime_s`, `epoch`, `wifi{ssid,rssi,ip}`, `heap{free,min_free,max_alloc}`, `woffu{status: in/out/unknown, credentials_invalid, last_poll_epoch}`, `mode` (active/off), `mode_reason`, `workday{valid,weekend,holiday}`, `window{start,end}`, `led{color,mode}` (lo que muestra de verdad), `led_auto` (lo que mostraría sin override), `override` (null o `{color,mode}`), `nfc{reader,card}`, `auto_sign{enabled,today_start,today_end}`, `config{wifi_ssid, woffu_user, window_start/end, auto_sign, auto_sign_schedule[5], remote_url, has_password, ota_auto}` (sin las passwords de WiFi/Woffu, que nunca salen del dispositivo), `ota{latest, available, last_check_epoch}` |
+| `status` | al conectar, en cada cambio relevante (`requestStatus()`: LED, estado Woffu, modo, override) y cada 60s | `fw`, `uptime_s`, `epoch`, `wifi{ssid,rssi,ip}`, `heap{free,min_free,max_alloc}`, `woffu{status: in/out/unknown, credentials_invalid, last_poll_epoch}`, `mode` (active/off), `mode_reason`, `workday{valid,weekend,holiday}`, `window{start,end}`, `led{color,mode}` (lo que muestra de verdad), `led_auto` (lo que mostraría sin override), `override` (null o `{color,mode}`), `nfc{reader,card}`, `auto_sign{enabled,today_start,today_end}`, `config{wifi_ssid, woffu_user, window_start/end, auto_sign, auto_sign_schedule[5], remote_url, has_password, ota_auto}` (sin las passwords de WiFi/Woffu, que nunca salen del dispositivo), `ota{latest, available, last_check_epoch}`, `balance` (null hasta la primera consulta, o `{date, until_yesterday_s, schedule_today_s, today_valid, today_signed, closed_s, open_since_epoch}`, ver `### Saldo de horas`) |
 | `event` | fichajes (NFC, automático, remoto), cambios de color fijo, errores, progreso OTA | `kind` (sign/led/nfc/ota/error/info), `msg` |
 | `log` | líneas nuevas del log | `lines: [[seq, "[HH:MM:SS] ..."], ...]` |
 | `ack` | respuesta a cada comando | `id`, `ok`, `msg` |
@@ -419,7 +437,7 @@ Dispositivo → servidor:
 Servidor → dispositivo: `{"type":"cmd","id":"…","cmd":…}` con `cmd`:
 
 - `sign_in` / `sign_out`: `signTowards()` — la misma lógica que el fichaje automático (que ahora también la usa): consulta el estado real en Woffu y solo llama a `toggleSign()` si hace falta; con estado `UNKNOWN` no ficha. Funciona también fuera de la ventana de encendido (p.ej. desfichar a distancia si se olvidó al salir).
-- `refresh`: consulta Woffu ya (`pollWoffuNow()`, también fuera de horario).
+- `refresh`: consulta Woffu ya (`pollWoffuNow()`, también fuera de horario) y el saldo de horas (`refreshBalance()`).
 - `led_set` (`color`: red/yellow/green/all/off, `mode`: solid/blink_slow/blink_fast) / `led_auto`: ver abajo.
 - `reboot`, `ota_check`, `ota_update` (comprueba `version.txt` y, si hay versión nueva, instala; el progreso sale como eventos `ota`), `status` (fuerza un `status`).
 - `config_set` (`config`: objeto con solo los campos a cambiar, mismos nombres que `status.config` más `wifi_pass`/`woffu_pass`/`device_password`): `applyRemoteConfig()` valida con `validateConfig()` y guarda. Las passwords de WiFi/Woffu solo cambian si llegan no vacías. Si cambia algo que solo se lee al arrancar (WiFi, cuenta de Woffu, URL del servidor) reinicia, igual que el portal; el resto (horario, fichaje automático, password, `ota_auto`) se aplica sin reiniciar.

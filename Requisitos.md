@@ -54,7 +54,8 @@ Compatible con cualquier placa ESP32 que tenga WiFi (el provisioning y el OTA so
 - El dispositivo abre una conexión WebSocket saliente (TLS) hacia un servidor propio y se mantiene conectado mientras está en modo normal, reconectando solo si se cae.
 - El servidor sirve una web app (pensada para el móvil) desde la que se puede:
   - ver si el dispositivo está conectado, el estado en Woffu (dentro/fuera), el color real del semáforo y datos del dispositivo (firmware, WiFi, memoria, horario, NFC, fichaje automático);
-  - **fichar entrada/salida** a distancia, con la misma comprobación previa del estado real que el fichaje automático (no ficha si ya se está en el estado pedido, ni si no se puede confirmar el estado);
+  - ver el **saldo anual de horas** (trabajado − teórico, el "cómputo" de Woffu) junto al estado, actualizado en vivo mientras se está fichado, con la hora a la que el saldo queda a cero (para saber si ya se puede salir). El dispositivo pide a Woffu cada mañana el saldo hasta ayer y la jornada teórica de hoy;
+  - **fichar entrada/salida** a distancia (el botón de fichar hacia el estado actual queda deshabilitado), con la misma comprobación previa del estado real que el fichaje automático (no ficha si ya se está en el estado pedido, ni si no se puede confirmar el estado);
   - **poner un color fijo** (rojo, ámbar, verde, todos o apagado; fijo o parpadeando) para que quien mire el semáforo no vea el estado real. Se mantiene, también tras reiniciar, hasta que se vuelve a **automático** desde la web app. Fuera de horario/festivo el semáforo sigue apagado;
   - forzar una consulta a Woffu, reiniciar el dispositivo, comprobar o lanzar una actualización OTA;
   - cambiar **toda la configuración** que se puede cambiar en el portal: password del dispositivo, horario, fichaje automático, actualización automática, WiFi, Woffu, servidor, aprender la tarjeta NFC y restablecer de fábrica;
