@@ -114,6 +114,10 @@ main { max-width: 640px; margin: 0 auto; padding: 4px 16px 32px; }
 .state.in { color: var(--ok); }
 .state.out { color: var(--danger); }
 .state.unknown { color: var(--warn); }
+.hero-row { display: flex; flex-wrap: wrap; column-gap: 24px; }
+.state.positive { color: var(--ok); }
+.state.negative { color: var(--danger); }
+#balance-sub { margin-bottom: 2px; }
 
 .banner {
   display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;

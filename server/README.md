@@ -10,7 +10,7 @@ El firmware trae por defecto `wss://woffu.ededona.es/ws/device` como servidor (s
 
 Desde la web app:
 
-- **Panel**: estado en Woffu (dentro/fuera), color real del semáforo, datos del dispositivo; **fichar entrada/salida** (se comprueba antes el estado real en Woffu, igual que el fichaje automático); **color fijo** (rojo/ámbar/verde/todos/apagado, fijo o parpadeando) que oculta tu estado, persistente también tras reiniciar, hasta volver a **automático**.
+- **Panel**: estado en Woffu (dentro/fuera) y **saldo anual de horas** en vivo (hasta ayer + lo trabajado hoy − la jornada de hoy; si estás dentro y en negativo, a qué hora queda a cero), color real del semáforo, datos del dispositivo; **fichar entrada/salida** (se comprueba antes el estado real en Woffu, igual que el fichaje automático); **color fijo** (rojo/ámbar/verde/todos/apagado, fijo o parpadeando) que oculta tu estado, persistente también tras reiniciar, hasta volver a **automático**.
 - **Actividad**: fichajes (NFC, horario, remoto), conexiones, cambios, errores.
 - **Ajustes**: todo lo que se configura en el portal del dispositivo: password, horario, fichaje automático, actualizaciones (comprobar, instalar, automáticas), WiFi, Woffu, servidor, aprender tarjeta NFC, restablecer de fábrica.
 - **Debug**: log en vivo del dispositivo (el mismo que sale por serie), último estado en JSON, reiniciar.

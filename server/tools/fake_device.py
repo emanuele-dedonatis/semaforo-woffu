@@ -35,6 +35,16 @@ class FakeDevice:
             "remote_url": "wss://woffu.ededona.es/ws/device", "ota_auto": True,
         }
         self.card = True
+        self.closed_s = 0          # tramos de hoy ya cerrados
+        self.open_since = None     # epoch de la entrada del tramo abierto
+        self.signed_today = False
+
+    def balance(self) -> dict:
+        return {
+            "date": time.strftime("%Y-%m-%d"), "until_yesterday_s": -1410, "schedule_today_s": 27000,
+            "today_valid": True, "today_signed": self.signed_today, "closed_s": self.closed_s,
+            "open_since_epoch": self.open_since,
+        }
 
     def led(self) -> dict:
         if self.override:
@@ -55,6 +65,7 @@ class FakeDevice:
             "nfc": {"reader": True, "card": self.card},
             "auto_sign": {"enabled": self.config["auto_sign"], "today_start": "08:30", "today_end": "16:30"},
             "config": {**self.config, "has_password": bool(self.password)},
+            "balance": self.balance(),
             "ota": {"latest": "9.9.9-fake", "available": False, "last_check_epoch": int(self.boot)},
         }
 
@@ -72,6 +83,13 @@ class FakeDevice:
                 msg = "ya estaba fichada, no se hace nada."
             else:
                 self.woffu = want
+                self.signed_today = True
+                if want == "in":
+                    # Entrada simulada hace 2 h para ver el saldo moverse.
+                    self.open_since = int(time.time()) - 7200
+                else:
+                    self.closed_s += int(time.time()) - (self.open_since or int(time.time()))
+                    self.open_since = None
                 msg = "fichaje registrado."
                 out.append({"type": "event", "kind": "sign", "msg": f"Fichaje remoto: {msg}"})
         elif name == "refresh":

@@ -57,6 +57,18 @@ function duration(sec) {
   return `${m} min`;
 }
 
+// Saldo de horas: "+1h 05m" / "-0h 23m".
+function hm(sec, signed = true) {
+  const a = Math.abs(Math.trunc(sec));
+  const sign = signed ? (sec < 0 ? "-" : "+") : "";
+  return `${sign}${Math.floor(a / 3600)}h ${String(Math.floor((a % 3600) / 60)).padStart(2, "0")}m`;
+}
+
+function localIsoDate(t) {
+  const d = new Date(t * 1000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function toast(text, isError = false) {
   const el = document.createElement("div");
   el.className = "toast" + (isError ? " error" : "");
@@ -211,6 +223,7 @@ function renderHero() {
   if (!online && state.statusAt) sub.push(`dato de ${ago(state.statusAt)}`);
   $("#woffu-sub").textContent = sub.join(" · ");
   renderSignButtons(woffu);
+  renderBalance();
 
   let ledText = "";
   if (s) {
@@ -218,6 +231,42 @@ function renderHero() {
     else if (s.led) ledText = `Semáforo: ${COLOR_NAMES[s.led.color] || s.led.color}, ${MODE_NAMES[s.led.mode] || s.led.mode}`;
   }
   $("#led-sub").textContent = ledText;
+}
+
+// Saldo anual en vivo. El dispositivo manda cada manana el saldo hasta ayer
+// y la jornada teorica de hoy, y en cada estado lo fichado hoy; aqui se suma
+// el tramo abierto hasta ahora. Antes del primer fichaje del dia se muestra
+// el saldo hasta ayer; desde entonces, el saldo si se desfichara ahora.
+function renderBalance() {
+  const s = state.status;
+  const b = s ? s.balance : null;
+  $("#balance-box").hidden = !b;
+  if (!b) { $("#balance-sub").textContent = ""; return; }
+
+  const t = now();
+  const isToday = b.date === localIsoDate(t);
+  const open = isToday && b.open_since_epoch ? Math.max(0, t - b.open_since_epoch) : 0;
+  const worked = b.closed_s + open;
+  const total = b.until_yesterday_s + (b.today_signed ? worked - b.schedule_today_s : 0);
+
+  const value = $("#balance-value");
+  value.textContent = hm(total);
+  value.className = "state " + (total < 0 ? "negative" : "positive");
+
+  const sub = [];
+  if (!isToday) {
+    const [y, m, d] = b.date.split("-");
+    sub.push(`Dato del ${d}/${m}/${y}`);
+  } else if (!b.today_signed) {
+    sub.push(b.schedule_today_s ? `Hasta ayer · hoy ${hm(b.schedule_today_s, false)} sin fichar aún` : "Hasta ayer");
+  } else {
+    sub.push(`Hoy ${hm(worked, false)} de ${hm(b.schedule_today_s, false)}`);
+    if (b.open_since_epoch) {
+      if (total < 0) sub.push(`a cero a las ${clock(t - total)}`);
+      else if (t - total >= b.open_since_epoch) sub.push(`en positivo desde las ${clock(t - total)}`);
+    }
+  }
+  $("#balance-sub").textContent = sub.join(" · ");
 }
 
 // Solo se puede fichar hacia el estado contrario al actual en Woffu: dentro,
