@@ -47,6 +47,9 @@ private:
     void saveConfigAndReboot(const DeviceConfig& newConfig);
     void updateLedForCurrentState();
     void refreshWorkdayInfo(int yday);
+    // Saldo de horas del ano hasta ayer + jornada teorica de hoy (una vez al
+    // dia, ver Arquitectura.md, "Saldo de horas").
+    bool refreshBalance();
     void handleAutoSign(uint16_t nowMinutes, const struct tm& timeinfo);
     void attemptAutoSign(bool isEntry);
     SignOutcome signTowards(bool isEntry, const char* origin, String& message);
@@ -108,6 +111,13 @@ private:
     bool otaAvailable_ = false;
     time_t lastOtaCheckEpoch_ = 0;
     int lastOtaCheckYday_ = -1;
+    // Saldo de horas (refreshBalance()).
+    bool balanceValid_ = false;
+    String balanceDate_;          // dia (YYYY-MM-DD) al que se refieren los datos
+    long balanceUntilYesterdayS_ = 0;
+    long balanceScheduleTodayS_ = 0;
+    int lastBalanceYday_ = -1;
+    uint32_t nextBalanceTryMs_ = 0;
     String pollModeReason_;
     time_t lastPollEpoch_ = 0;
 

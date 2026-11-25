@@ -19,6 +19,7 @@ constexpr uint32_t kConnectingTimeoutMs = 20000; // tiempo maximo en CONNECTING 
 constexpr uint32_t kNfcLearnTimeoutMs = 30000; // tiempo maximo esperando una tarjeta durante el aprendizaje
 constexpr uint32_t kNfcLearnResultHoldMs = 3000; // cuanto se mantiene el "parpadeo ALL" tras aprender una tarjeta
 constexpr uint32_t kNfcResultHoldMs = 3000; // cuanto se mantiene el rojo/verde/ambar tras un tap en RUNNING
+constexpr uint32_t kBalanceRetryMs = 30UL * 60 * 1000;
 constexpr uint32_t kPollIntervalMs = 60000; // ritmo fijo de sondeo a Woffu mientras el dispositivo esta activo
 
 LedCommand ledSlowBlink(LedColor color) {
@@ -577,6 +578,12 @@ void AppStateMachine::handleRunning() {
     if (withinOnOffWindow && timeinfo.tm_yday != lastWorkdayYday_) {
         refreshWorkdayInfo(timeinfo.tm_yday);
     }
+    // Saldo de horas: una vez al dia al encenderse; si falla, se reintenta
+    // cada kBalanceRetryMs.
+    if (withinOnOffWindow && timeinfo.tm_yday != lastBalanceYday_ &&
+        static_cast<int32_t>(millis() - nextBalanceTryMs_) >= 0) {
+        refreshBalance();
+    }
 
     String reason;
     PollMode mode = scheduler_.currentMode(nowMinutes, workdayInfo_, workdayValid_, reason);
@@ -711,6 +718,61 @@ void AppStateMachine::refreshWorkdayInfo(int yday) {
         logPrintln(
             "Woffu: no se pudo obtener la jornada de hoy; se usara polling activo por defecto hasta manana.");
     }
+}
+
+namespace {
+String isoDate(time_t t) {
+    struct tm local;
+    localtime_r(&t, &local);
+    char buf[11];
+    strftime(buf, sizeof(buf), "%Y-%m-%d", &local);
+    return String(buf);
+}
+
+String formatHm(long seconds) {
+    char buf[16];
+    long a = labs(seconds);
+    snprintf(buf, sizeof(buf), "%s%ldh %02ldm", seconds < 0 ? "-" : "+", a / 3600, (a % 3600) / 60);
+    return String(buf);
+}
+}  // namespace
+
+bool AppStateMachine::refreshBalance() {
+    time_t now = time(nullptr);
+    struct tm local;
+    localtime_r(&now, &local);
+    nextBalanceTryMs_ = millis() + kBalanceRetryMs;
+
+    // Saldo hasta ayer: el endpoint de diarios cuenta hoy como jornada
+    // entera en negativo mientras no se cierra (ver tools/README.md), asi
+    // que hoy va aparte: jornada teorica de hoy aqui y lo trabajado de los
+    // slots de cada fetchStatus(). La web app junta las tres cosas.
+    String today = isoDate(now);
+    long untilYesterday = 0;
+    if (local.tm_yday > 0) {
+        DiariesTotals year;
+        String yearStart = String(local.tm_year + 1900) + "-01-01";
+        if (!woffuClient_.fetchDiariesTotals(yearStart, isoDate(now - 86400), local.tm_yday, year)) {
+            logPrintln("Woffu: no se pudo obtener el saldo de horas; se reintenta en 30 min.");
+            return false;
+        }
+        untilYesterday = year.differenceSeconds;
+    }
+    DiariesTotals day;
+    if (!woffuClient_.fetchDiariesTotals(today, today, 1, day)) {
+        logPrintln("Woffu: no se pudo obtener la jornada teorica de hoy; se reintenta en 30 min.");
+        return false;
+    }
+
+    balanceValid_ = true;
+    balanceDate_ = today;
+    balanceUntilYesterdayS_ = untilYesterday;
+    balanceScheduleTodayS_ = day.scheduleSeconds;
+    lastBalanceYday_ = local.tm_yday;
+    logPrintf("Woffu: saldo del ano hasta ayer %s, jornada teorica de hoy %s.\n", formatHm(untilYesterday).c_str(),
+              formatHm(day.scheduleSeconds).c_str() + 1);
+    remote_.requestStatus();
+    return true;
 }
 
 void AppStateMachine::handleAutoSign(uint16_t nowMinutes, const struct tm& timeinfo) {
@@ -867,6 +929,7 @@ void AppStateMachine::executeRemoteCommand(const RemoteCommand& command, PollMod
         remote_.sendAck(command.id, true, "ok");
     } else if (command.cmd == "refresh") {
         pollWoffuNow(mode);
+        refreshBalance();
         remote_.requestStatus();
         remote_.sendAck(command.id, lastWoffuStatus_ != WoffuStatus::UNKNOWN,
                         String("Estado Woffu: ") + woffuStatusName(lastWoffuStatus_));
@@ -1047,6 +1110,32 @@ void AppStateMachine::publishStatus(PollMode mode) {
     config["remote_url"] = cfg.remoteUrl;
     config["has_password"] = !cfg.devicePassword.isEmpty();
     config["ota_auto"] = cfg.otaAutoUpdate;
+
+    // Saldo de horas: la web app calcula el saldo en vivo como
+    // until_yesterday_s + (si hoy hay fichajes) trabajado hoy - schedule_today_s,
+    // con trabajado hoy = closed_s + (ahora - open_since_epoch).
+    const TodayWork& work = woffuClient_.todayWork();
+    if (balanceValid_) {
+        JsonObject balance = doc["balance"].to<JsonObject>();
+        balance["date"] = balanceDate_;
+        balance["until_yesterday_s"] = balanceUntilYesterdayS_;
+        balance["schedule_today_s"] = balanceScheduleTodayS_;
+        bool workIsToday = work.valid && isoDate(now) == balanceDate_;
+        balance["today_valid"] = workIsToday;
+        balance["today_signed"] = workIsToday && work.anySlot;
+        balance["closed_s"] = workIsToday ? work.closedSeconds : 0;
+        if (workIsToday && work.openSinceSec >= 0) {
+            struct tm midnight = timeinfo;
+            midnight.tm_hour = 0;
+            midnight.tm_min = 0;
+            midnight.tm_sec = 0;
+            balance["open_since_epoch"] = static_cast<long>(mktime(&midnight)) + work.openSinceSec;
+        } else {
+            balance["open_since_epoch"] = nullptr;
+        }
+    } else {
+        doc["balance"] = nullptr;
+    }
 
     JsonObject ota = doc["ota"].to<JsonObject>();
     ota["latest"] = otaLatest_;

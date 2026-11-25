@@ -11,6 +11,7 @@ namespace {
 constexpr const char* kAuthUrl = "https://app.woffu.com/api/svc/accounts/authorization/token";
 constexpr const char* kSlotsUrl = "https://app.woffu.com/api/svc/signs/v2/signs/slots";
 constexpr const char* kUsersUrl = "https://app.woffu.com/api/users";
+constexpr const char* kCompaniesUrl = "https://app.woffu.com/api/companies";
 constexpr const char* kWorkdayUrlPrefix = "https://app.woffu.com/api/svc/core/users/";
 constexpr const char* kWorkdayUrlSuffix = "/diarysummaries/workday";
 // Verificado contra la API real con tools/toggle_sign.py: el body no lleva
@@ -36,6 +37,51 @@ int timezoneOffsetMinutes() {
     return static_cast<int>(-offsetSecondsEast / 60);
 }
 
+// Segundos desde medianoche de un lado (in/out) de un slot, o -1 si no hay.
+// Mismo criterio que tools/balance.py: el lado puede ser un string ISO o un
+// objeto con la hora en alguno de estos campos.
+long slotSeconds(JsonVariantConst endpoint) {
+    const char* text = nullptr;
+    if (endpoint.is<const char*>()) {
+        text = endpoint.as<const char*>();
+    } else if (endpoint.is<JsonObjectConst>()) {
+        for (const char* key : {"shortTrueTime", "shortTime", "trueTime", "time", "date"}) {
+            if (endpoint[key].is<const char*>()) {
+                text = endpoint[key].as<const char*>();
+                break;
+            }
+        }
+    }
+    if (text == nullptr) {
+        return -1;
+    }
+    const char* t = strchr(text, 'T');
+    if (t != nullptr) {
+        text = t + 1;
+    }
+    int h = 0, m = 0, sec = 0;
+    int n = sscanf(text, "%d:%d:%d", &h, &m, &sec);
+    if (n < 2) {
+        return -1;
+    }
+    return static_cast<long>(h) * 3600 + m * 60 + (n == 3 ? sec : 0);
+}
+
+// "*Formatted" de Woffu ({"values": ["-7", "30"]}) a segundos.
+long formattedSeconds(JsonVariantConst fmt) {
+    JsonArrayConst values = fmt["values"];
+    if (values.isNull() || values.size() == 0) {
+        return 0;
+    }
+    String head = values[0].as<String>();
+    head.trim();
+    bool negative = head.startsWith("-");
+    long hours = labs(head.toInt());
+    long minutes = values.size() > 1 ? labs(values[1].as<String>().toInt()) : 0;
+    long total = hours * 3600 + minutes * 60;
+    return negative ? -total : total;
+}
+
 String urlEncode(const String& value) {
     String encoded;
     encoded.reserve(value.length() * 3);
@@ -58,6 +104,9 @@ void WoffuClient::begin(const String& username, const String& password) {
     password_ = password;
     accessToken_ = "";
     userId_ = "";
+    diariesHost_ = "app.woffu.com";
+    diariesHostDiscovered_ = false;
+    today_ = TodayWork();
     credentialsInvalid_ = false;
 }
 
@@ -106,7 +155,8 @@ bool WoffuClient::login() {
     return true;
 }
 
-bool WoffuClient::authenticatedGet(const String& url, JsonDocument& doc) {
+bool WoffuClient::authenticatedGet(const String& url, JsonDocument& doc, const JsonDocument* filter,
+                                   int* statusOut) {
     if (accessToken_.isEmpty() && !login()) {
         return false;
     }
@@ -126,6 +176,9 @@ bool WoffuClient::authenticatedGet(const String& url, JsonDocument& doc) {
         http.addHeader("Authorization", "Bearer " + accessToken_);
 
         int status = http.GET();
+        if (statusOut != nullptr) {
+            *statusOut = status;
+        }
         logPrintf("Woffu API: GET %s -> %d\n", url.c_str(), status);
         if (status == HTTP_CODE_UNAUTHORIZED) {
             http.end();
@@ -139,7 +192,10 @@ bool WoffuClient::authenticatedGet(const String& url, JsonDocument& doc) {
             return false;
         }
 
-        DeserializationError error = deserializeJson(doc, http.getStream());
+        DeserializationError error =
+            filter != nullptr
+                ? deserializeJson(doc, http.getStream(), DeserializationOption::Filter(*filter))
+                : deserializeJson(doc, http.getStream());
         http.end();
         if (error) {
             logPrintf("Woffu API: error al parsear la respuesta de %s (%s)\n", url.c_str(), error.c_str());
@@ -207,6 +263,7 @@ WoffuStatus WoffuClient::fetchStatus() {
     }
 
     JsonArray slots = doc.as<JsonArray>();
+    updateTodayWork(slots);
     if (slots.size() == 0) {
         return WoffuStatus::CLOCKED_OUT;
     }
@@ -244,4 +301,106 @@ bool WoffuClient::fetchWorkday(WorkdayInfo& out) {
     out.isHoliday = doc["isHoliday"] | false;
 
     return true;
+}
+
+void WoffuClient::updateTodayWork(JsonArrayConst slots) {
+    // Los slots son los fichajes de hoy, con la hora local de la empresa
+    // (la misma del dispositivo, ver TimeSync). Ver tools/balance.py.
+    time_t now = time(nullptr);
+    struct tm local;
+    localtime_r(&now, &local);
+    long nowSec = static_cast<long>(local.tm_hour) * 3600 + local.tm_min * 60 + local.tm_sec;
+
+    TodayWork work;
+    work.valid = true;
+    for (JsonObjectConst slot : slots) {
+        long start = slotSeconds(slot["in"]);
+        if (start < 0) {
+            continue;
+        }
+        work.anySlot = true;
+        long end = slotSeconds(slot["out"]);
+        if (end < 0) {
+            work.openSinceSec = static_cast<int32_t>(start);
+            continue;
+        }
+        if (end > start) {
+            work.closedSeconds += static_cast<uint32_t>(end - start);
+        }
+    }
+    // Un tramo "abierto" que empieza en el futuro seria un dato raro: se ignora.
+    if (work.openSinceSec > nowSec) {
+        work.openSinceSec = -1;
+    }
+    today_ = work;
+}
+
+bool WoffuClient::discoverDiariesHost() {
+    // Igual que tools/balance.py: si app.woffu.com no sirve los diarios, se
+    // prueba con el subdominio de la empresa que devuelve /api/companies.
+    diariesHostDiscovered_ = true;
+    JsonDocument doc;
+    if (!authenticatedGet(kCompaniesUrl, doc)) {
+        return false;
+    }
+    JsonVariantConst entry = doc.is<JsonArray>() ? doc[0].as<JsonVariantConst>() : doc.as<JsonVariantConst>();
+    for (const char* key : {"Domain", "domain", "CompanyDomain", "Url", "url"}) {
+        if (!entry[key].is<const char*>()) {
+            continue;
+        }
+        String host = entry[key].as<String>();
+        host.trim();
+        host.replace("https://", "");
+        host.replace("http://", "");
+        while (host.endsWith("/")) {
+            host.remove(host.length() - 1);
+        }
+        if (host.isEmpty()) {
+            continue;
+        }
+        if (host.indexOf('.') < 0) {
+            host += ".woffu.com";
+        }
+        logPrintf("Woffu API: diarios en %s.\n", host.c_str());
+        diariesHost_ = host;
+        return true;
+    }
+    logPrintln("Woffu API: /api/companies no indica el subdominio de la empresa.");
+    return false;
+}
+
+bool WoffuClient::fetchDiariesTotals(const String& fromDate, const String& toDate, int days, DiariesTotals& out) {
+    if (userId_.isEmpty() && !fetchUserId()) {
+        return false;
+    }
+
+    // La respuesta trae ademas un diario por dia (cientos de KB a final de
+    // ano): el filtro los descarta mientras se lee, solo quedan los totales.
+    // pageSize como el de la web (todos los dias del rango en una pagina).
+    JsonDocument filter;
+    filter["totalDifferenceTime"] = true;
+    filter["totalScheduleTimeFormatted"] = true;
+
+    for (int attempt = 0; attempt < 2; attempt++) {
+        String url = "https://" + diariesHost_ + "/api/svc/core/diariesquery/users/" + userId_ +
+                     "/diaries/summary/presence?userId=" + userId_ + "&fromDate=" + fromDate +
+                     "&toDate=" + toDate + "&pageSize=" + String(days + 1) +
+                     "&includeNotHourTypes=true&includeDifference=true";
+        JsonDocument doc;
+        int status = 0;
+        if (authenticatedGet(url, doc, &filter, &status)) {
+            if (!doc["totalDifferenceTime"].is<long>()) {
+                logPrintln("Woffu API: la respuesta de diarios no incluye totalDifferenceTime");
+                return false;
+            }
+            out.differenceSeconds = doc["totalDifferenceTime"].as<long>();
+            out.scheduleSeconds = formattedSeconds(doc["totalScheduleTimeFormatted"]);
+            return true;
+        }
+        bool wrongHost = status == HTTP_CODE_FORBIDDEN || status == HTTP_CODE_NOT_FOUND;
+        if (!wrongHost || diariesHostDiscovered_ || !discoverDiariesHost()) {
+            return false;
+        }
+    }
+    return false;
 }
